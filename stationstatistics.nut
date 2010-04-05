@@ -116,6 +116,6 @@ function StationStatistics::ReadStatisticsData()
 	}
 
 	//AILog.Info("bus usage = " + this.usage.bus.percent_usage);
-
+ 
 	Helper.SetSign(AIBaseStation.GetLocation(station_id), "w" + cargo_waiting + " r" + rating + " u" + Helper.Max(usage.bus.percent_usage, usage.truck.percent_usage) + " a" + usage.aircraft.percent_usage);
 }
