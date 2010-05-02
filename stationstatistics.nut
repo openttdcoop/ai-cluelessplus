@@ -49,9 +49,10 @@ function StationStatistics::VehicleIsWithinTileList(vehicle_id, tile_list)
 
 function StationStatistics::ReadStatisticsData()
 {
-	//AILog.Info("ReadStatisticsData for station " + AIStation.GetName(this.station_id));
+	//AILog.Info("ReadStatisticsData for station " + AIStation.GetName(this.station_id) + " - " + AICargo.GetCargoLabel(this.cargo_id) + " " + this.cargo_id);
 
 	local alpha = 4; // weight of old value (new value will have weight 1)
+
 
 	local currently_waiting = AIStation.GetCargoWaiting(this.station_id, this.cargo_id);
 	if(this.cargo_waiting == -1)
@@ -116,6 +117,6 @@ function StationStatistics::ReadStatisticsData()
 	}
 
 	//AILog.Info("bus usage = " + this.usage.bus.percent_usage);
- 
+
 	Helper.SetSign(AIBaseStation.GetLocation(station_id), "w" + cargo_waiting + " r" + rating + " u" + Helper.Max(usage.bus.percent_usage, usage.truck.percent_usage) + " a" + usage.aircraft.percent_usage);
 }

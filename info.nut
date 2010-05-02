@@ -47,9 +47,10 @@ class FCluelessPlusPlusAI extends AIInfo {
 
 	function GetSettings() {
 		AddSetting({name = "slow_ai", description = "Think and build slower", easy_value = 1, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
-		AddSetting({name = "max_num_bus_stops", description = "Maximum number of bus stops per station (and town) to build" easy_value = 1, medium_value = 2, hard_value = 4, custom_value = 4, flags = AICONFIG_INGAME, min_value = 1, max_value = 16});
-		AddSetting({name = "debug_signs", description = "Build debug signs", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		AddSetting({name = "connection_types", description = "", easy_value = 0, medium_value = 2, hard_value = 2, custom_value = 2, min_value = 0, max_value = 2, flags = AICONFIG_INGAME});
+		AddSetting({name = "max_num_bus_stops", description = "Maximum number of bus/truck stops per station to build" easy_value = 1, medium_value = 2, hard_value = 4, custom_value = 4, flags = AICONFIG_INGAME, min_value = 1, max_value = 16});
+		AddSetting({name = "log_level", description = "Log level (higher = print more)", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_INGAME, min_value = 1, max_value = 3});
+		AddSetting({name = "debug_signs", description = "Build debug signs", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 
 		AddLabels("connection_types", {_0 = "Connect towns only", _1 = "Connect industries only", _2 = "Connect both towns and industries" } );
 	}

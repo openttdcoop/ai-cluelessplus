@@ -84,7 +84,14 @@ class RoadBuilder {
 	
 
 	// If repair_existing == true, then it should as much as possible avoid building road next to existing to get a tiny bit less penalty
-	static function ConnectTiles(tile1, tile2, call_count, repair_existing = false);
+
+	static CONNECT_SUCCEEDED = 0;
+	static CONNECT_FAILED_OTHER = 1;
+	static CONNECT_FAILED_TIME_OUT = 2;
+	static CONNECT_FAILED_NO_PATH_FOUND = 3;
+	static CONNECT_FAILED_OUT_OF_TRIES = 4;
+
+	static function ConnectTiles(tile1, tile2, call_count, repair_existing = false, max_loops = 4000);
 
 	/* Returns a table which always contain a key 'succeeded' that is true or false depeding
 	 * on if the function succeeded or not.
@@ -97,11 +104,13 @@ class RoadBuilder {
 	 * - permanently = <boolean>
 	 */
 	static function ConvertRailCrossingToBridge(rail_tile, prev_tile);
-	static function RemoveRoad(from_tile, to_tile);
+	//static function RemoveRoad(from_tile, to_tile);
+
+	static function RemoveRoadUpToRoadCrossing(start_tile);
 }
 
 
-function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = false) 
+function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = false, max_loops = 4000) 
 {
 
 	AILog.Info("Connecting tiles - try no: " + call_count);
@@ -119,17 +128,28 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 	pathfinder.cost.tile = 80; // default = 100
 
 	local path = false;
+	local i = 0;
 	while (path == false) {
 		path = pathfinder.FindPath(100);
 		AIController.Sleep(1);
 
 		if(play_slow == 1)
 			AIController.Sleep(5);
+
+		i += 100;
+
+		if (max_loops != -1 && i > max_loops)
+		{
+			AILog.Info("Finding path took to long -> abort");
+			return RoadBuilder.CONNECT_FAILED_TIME_OUT;
+		}
 	}
+
+	AILog.Info("loops used:" + i);
 
 	if(path == null) {
 		AILog.Info("Failed to find path");
-		return false;
+		return RoadBuilder.CONNECT_FAILED_NO_PATH_FOUND;
 	}
 	AILog.Info("Path found, now start building!");
 
@@ -203,14 +223,14 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 
 						// Try PF again
 						if (call_count > 4 || 
-								!RoadBuilder.ConnectTiles(tile1, path.GetTile(), call_count+1))
+								RoadBuilder.ConnectTiles(tile1, path.GetTile(), call_count+1) != RoadBuilder.CONNECT_SUCCEEDED)
 						{
 							AILog.Info("After several tries the road construction could still not be completed");
-							return false;
+							return RoadBuilder.CONNECT_FAILED_OUT_OF_TRIES;
 						}
 						else
 						{
-							return true;
+							return RoadBuilder.CONNECT_SUCCEEDED;
 						}
 					}
 
@@ -251,7 +271,11 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 
 	//AISign.BuildSign(tile1, "Done");
 
-	return true;
+	// Remove the from/to signs now that the road was successfully built
+	Helper.SetSign(tile1, "");
+	Helper.SetSign(tile2, "");
+
+	return RoadBuilder.CONNECT_SUCCEEDED;
 }
 
 function RoadBuilder::GetVehicleLocations()
@@ -713,9 +737,13 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	return { succeeded = true, bridge_start = tile_before, bridge_end = tile_after };
 }
 
+/*
+
+// It seems like this function do not work
+
 function RoadBuilder::RemoveRoad(from_tile, to_tile)
 {
-	local forward_dir = Tile.GetDirectionToTile(from_tile, to_tile);
+	local forward_dir = Direction.GetDirectionToTile(from_tile, to_tile);
 	if (!Direction.IsMainDir(forward_dir))
 	{
 		return false;
@@ -751,4 +779,128 @@ function RoadBuilder::RemoveRoad(from_tile, to_tile)
 			}
 		}
 	}
+}
+*/
+
+// TODO: Handle bridges/tunnels (perhaps leave long ones)
+// TODO: Manage to cross railways
+function RoadBuilder::RemoveRoadUpToRoadCrossing(start_tile)
+{
+	//if (!AITile.HasTransportType(start_tile, AITile.TRANSPORT_ROAD))
+	if (!AIRoad.IsRoadTile(start_tile) || AIRoad.IsDriveThroughRoadStationTile(start_tile))
+	{
+		Log.Info("RemoveRoadUpToRoadCrossing fails because start tile do not have road", Log.LVL_DEBUG);
+		return false;
+	}
+
+	local curr_tile = start_tile;
+	local next_tile = 0;
+
+	//while(AITile.HasTransportType(curr_tile, AITile.TRANSPORT_ROAD))
+	while(AICompany.IsMine(AITile.GetOwner(curr_tile)) &&
+			(
+				// Is road or bridge/tunnel
+				(AIRoad.IsRoadTile(curr_tile) && !AIRoad.IsDriveThroughRoadStationTile(curr_tile)) ||
+				AITile.HasTransportType(curr_tile, AITile.TRANSPORT_ROAD) ||
+				AIBridge.IsBridgeTile(curr_tile) || AITunnel.IsTunnelTile(curr_tile)
+			))
+	{
+		// Check for bridge/tunnel
+		local has_bridge_tunnel = false;
+		local bridge_tunnel_other_end = -1;
+		if(AIBridge.IsBridgeTile(curr_tile))
+		{
+			has_bridge_tunnel = true;
+			bridge_tunnel_other_end = AIBridge.GetOtherBridgeEnd(curr_tile);
+		}
+		else if(AITunnel.IsTunnelTile(curr_tile))
+		{
+			has_bridge_tunnel = true;
+			bridge_tunnel_other_end = AITunnel.GetOtherTunnelEnd(curr_tile);
+		}
+
+		if(has_bridge_tunnel) // has bridge or tunnel -> go to other end
+		{
+			Helper.SetSign(curr_tile, "bridge|tunnel");
+			local dir = Direction.GetDirectionToTile(curr_tile, bridge_tunnel_other_end);
+			local length = AIMap.DistanceManhattan(curr_tile, bridge_tunnel_other_end) + 1;
+
+			// Go to the tile after the bridge
+			curr_tile = bridge_tunnel_other_end; 
+			next_tile = Direction.GetAdjacentTileInDirection(curr_tile, dir); // next tile after bridge
+
+			// Remove bridges/tunnels shorter than length 8
+			if(length < 8)
+			{
+				AITile.DemolishTile(curr_tile);
+			}
+			Helper.SetSign(curr_tile, "curr");
+			Helper.SetSign(next_tile, "next");
+		}
+		else
+		{
+			Helper.SetSign(curr_tile, "curr");
+
+			// Curr tile is neither a bridge nor a tunnel
+			// Find next tile
+			local neighbours = Tile.GetNeighbours4MainDir(curr_tile);
+			neighbours.Valuate(AIRoad.AreRoadTilesConnected, curr_tile);
+			neighbours.KeepValue(1);
+
+			// > 1 neighbours -> curr_tile is a road crossing tile
+			if(neighbours.Count() > 1)
+			{
+				Log.Info("RemoveRoadUpToRoadCrossing stops because road crossing found", Log.LVL_DEBUG);
+				break;
+			}
+
+			if(neighbours.Count() == 0)
+			{
+				// This should really only happen if the start tile contains a road bit that is not connected with anything
+				Log.Info("RemoveRoadUpToRoadCrossing stops because no connected neighbours found", Log.LVL_DEBUG);
+				break;
+			}
+
+			// Set next tile
+			next_tile = neighbours.Begin();
+		}
+
+		// Remove road from curr_tile
+		if(!AIRoad.RemoveRoad(curr_tile, next_tile)) 
+		{
+			// Abort if road removal fails
+			Log.Info("RemoveRoadUpToRoadCrossing: Remove road failed", Log.LVL_INFO);
+			break;
+		}
+
+		// In case the road tile has partial connections to neighbour tiles remove them
+		local neighbours = Tile.GetNeighbours4MainDir(curr_tile);
+		foreach(tile, _ in neighbours)
+		{
+			// Just try once; no wait for vehicles to move away.
+			AIRoad.RemoveRoad(curr_tile, tile);
+		}
+
+		// If next tile is rail, then we need to go to the next tile after that, since there won't be
+		// a road stump at the rail.
+		if(AITile.HasTransportType(next_tile, AITile.TRANSPORT_RAIL))
+		{
+			local dir = Direction.GetDirectionToTile(curr_tile, next_tile);
+
+			Log.Info("RemoveRoadUpToRoadCrossing: rail move " + Direction.GetDirString(dir), Log.LVL_INFO);
+			next_tile = Direction.GetAdjacentTileInDirection(next_tile, dir);
+
+			Helper.SetSign(next_tile, "new next");
+		}
+
+		// Go to next tile
+		curr_tile = next_tile;
+
+	}
+
+	Helper.SetSign(curr_tile, "end");
+
+	Log.Info("RemoveRoadUpToRoadCrossing done", Log.LVL_DEBUG);
+
+	return true;
 }

@@ -18,10 +18,13 @@ class ClueHelper {
 	static function StepFunction(t);
 	static function ArrayFind(array, toFind);
 	static function TileLocationString(tile);
+
 	static function IsTownInConnectionList(connection_list, check_town, cargo_id = -1); // cargo_id = -1 -> any cargo is enough
 	static function IsIndustryInConnectionList(connection_list, check_industry, cargo_id = -1);
 
 	static function CanConnectToRoad(road_tile, adjacent_tile_to_connect);
+
+	static function GetVehicleCargoType(vehicle_id);
 
 	// Creates a string such as 0001
 	static function IntToStrFill(int_val, num_digits);
@@ -32,6 +35,14 @@ class ClueHelper {
 	// The string str, has to be short enough that there is room to add some extra random data at the end so that an unique name is created
 	static function StoreInStationName(station_id, str);
 	static function ReadStrFromStationName(station_id);
+
+	// Similar but for vehicle names
+	static function StoreInVehicleName(vehicle_id, str);
+	static function ReadStrFromVehicleName(vehicle_id);
+
+	// Generic store/read
+	static function StoreInObjectName(obj_id, obj_api_class, str);
+	static function ReadStrFromObjectName(obj_id, obj_api_class);
 
 	// Why not have a bit fun and use a base that create smilies when you have a 2-digit value. :-)
 	static ENCODE_CHARS = ":)D|(/spOo3SP><{}[]$012456789abcdefghijklmnqrtuvwxyzABCEFGHIJKLMNQRTUVWXYZ?&;#=@!\\%";
@@ -142,7 +153,7 @@ function ClueHelper::IsIndustryInConnectionList(connection_list, check_industry,
 		{
 			if(industry == check_industry && (cargo_id == -1 || val.cargo_type == cargo_id))
 			{
-				AILog.Info(AIIndustry.GetName(check_industry) + " is not used by any connection for cargo_id == " + cargo_id);
+				Log.Info(AIIndustry.GetName(check_industry) + " is not used by any connection for cargo_id == " + cargo_id, Log.LVL_DEBUG);
 				return true;
 			}
 		}
@@ -287,6 +298,29 @@ function ClueHelper::CanConnectToRoad(road_tile, adjacent_tile_to_connect)
 	return true;
 }
 
+function ClueHelper::GetVehicleCargoType(vehicle_id)
+{
+	// Go through all cargos and check the capacity for each
+	// cargo.
+	local max_cargo = -1;
+	local max_cap = -1;
+
+	local cargos = AICargoList();
+	foreach(cargo, _ in cargos)
+	{
+		local cap = AIVehicle.GetCapacity(vehicle_id, cargo);
+		if(cap > max_cap)
+		{
+			max_cap = cap;
+			max_cargo = cargo;
+		}
+	}
+
+	// Return the cargo which the vehicle has highest capacity
+	// for.
+	return max_cargo;
+}
+
 function ClueHelper::IntToStrFill(int_val, num_digits)
 {
 	local str = int_val.tostring();
@@ -307,7 +341,7 @@ function ClueHelper::EncodeIntegerInStr(int_val, str_len)
 
 	local str = "";
 
-	while(i > base)
+	while(i >= base)
 	{
 		local div = (i / base).tointeger();
 		local reminder = i - div * base;
@@ -346,18 +380,38 @@ function ClueHelper::DecodeIntegerFromStr(str)
 
 function ClueHelper::StoreInStationName(station_id, str)
 {
-	local i = 1;
-	local stn_name = str + " " + ClueHelper.EncodeIntegerInStr(i, 2);
+	return ClueHelper.StoreInObjectName(station_id, AIBaseStation, str);
+}
 
-	while(!AIStation.SetName(station_id, stn_name))
+function ClueHelper::ReadStrFromStationName(station_id)
+{
+	return ClueHelper.ReadStrFromObjectName(station_id, AIBaseStation);
+}
+
+function ClueHelper::StoreInVehicleName(vehicle_id, str)
+{
+	return ClueHelper.StoreInObjectName(vehicle_id, AIVehicle, str);
+}
+
+function ClueHelper::ReadStrFromVehicleName(vehicle_id)
+{
+	return ClueHelper.ReadStrFromObjectName(vehicle_id, AIVehicle);
+}
+
+function ClueHelper::StoreInObjectName(obj_id, obj_api_class, str)
+{
+	local i = 1;
+	local obj_name = str + " " + ClueHelper.EncodeIntegerInStr(i, 2);
+
+	while(!obj_api_class.SetName(obj_id, obj_name))
 	{
 		AILog.Info(AIError.GetLastErrorString())
 		i++;
-		stn_name = str + " " + ClueHelper.EncodeIntegerInStr(i, 2);
+		obj_name = str + " " + ClueHelper.EncodeIntegerInStr(i, 2);
 
 		if(i > 9000)
 		{
-			AILog.Error("Failed to give name to station 9000 times");
+			AILog.Error("Failed to give name to object 9000 times");
 			return false;
 		}
 	}
@@ -365,10 +419,11 @@ function ClueHelper::StoreInStationName(station_id, str)
 	return true;
 }
 
-function ClueHelper::ReadStrFromStationName(station_id)
+function ClueHelper::ReadStrFromObjectName(obj_id, obj_api_class)
 {
-	local name = AIStation.GetName(station_id);
+	local name = obj_api_class.GetName(obj_id);
 	
 	local str = name.slice(0, name.len() - 3);
 	return str;
 }
+
