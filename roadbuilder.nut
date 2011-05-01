@@ -7,7 +7,7 @@
 // Author: Zuu (Leif Linse), user Zuu @ tt-forums.net
 // Purpose: To play around with the noai framework.
 //               - Not to make the next big thing.
-// Copyright: Leif Linse - 2008-2010
+// Copyright: Leif Linse - 2008-2011
 // License: GNU GPL - version 2
 
 
@@ -16,11 +16,20 @@ require("wayfinder.nut");
 
 class MyRoadPF extends RPF {}
 
+function MyRoadPF::InitializePath(sources, goals)
+{
+	::RPF.InitializePath(sources, goals);
+}
+
 function MyRoadPF::_Cost(path, new_tile, new_direction, self)
 {
 	local cost = ::RPF._Cost(path, new_tile, new_direction, self);
 
-	if(AITile.HasTransportType(new_tile, AITile.TRANSPORT_RAIL)) cost += 500;
+	// Penalty for crossing railways without bridge
+	if(AITile.HasTransportType(new_tile, AITile.TRANSPORT_RAIL)) cost += 800;
+
+	// Try to build around drive through stops
+	if(AIRoad.IsDriveThroughRoadStationTile(new_tile)) cost += 1000;
 
 	if(path != null)
 	{
@@ -32,7 +41,7 @@ function MyRoadPF::_Cost(path, new_tile, new_direction, self)
 		if(AIRoad.AreRoadTilesConnected(new_tile, prev_tile) && !AIRoad.AreRoadTilesConnected(prev_tile, new_tile))
 		{
 			// Don't try to use one-way roads from the back
-			AILog.Info("One-way road detected");
+			Log.Info("One-way road detected", Log.LVL_DEBUG);
 			cost += 10000;
 		}
 	}
@@ -79,7 +88,12 @@ function MyRoadPF::_Neighbours(path, cur_node, self)
 
 class RoadBuilder {
 
+	pf_loops_used = null;
+	build_loops_used = null;
+
 	constructor() {
+		this.pf_loops_used = 0;
+		this.build_loops_used = 0;
 	}
 	
 
@@ -91,7 +105,13 @@ class RoadBuilder {
 	static CONNECT_FAILED_NO_PATH_FOUND = 3;
 	static CONNECT_FAILED_OUT_OF_TRIES = 4;
 
-	static function ConnectTiles(tile1, tile2, call_count, repair_existing = false, max_loops = 4000);
+	function ConnectTiles(tile1, tile2, repair_existing = false, max_loops = 4000, call_count = 1);
+
+	// Call this function after ConnectTiles have returned to see how many loops that were used.
+	// The values are accumulated since the instance was created in case ConnectTiles is called
+	// multiple times or has to make recursive calls.
+	function GetPFLoopsUsed();
+	function GetBuildLoopsUsed();
 
 	/* Returns a table which always contain a key 'succeeded' that is true or false depeding
 	 * on if the function succeeded or not.
@@ -110,48 +130,54 @@ class RoadBuilder {
 }
 
 
-function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = false, max_loops = 4000) 
+function RoadBuilder::ConnectTiles(tile1, tile2, repair_existing = false, max_loops = 4000, call_count = 1) 
 {
-
-	AILog.Info("Connecting tiles - try no: " + call_count);
+	Log.Info("Connecting tiles - try no: " + call_count, Log.LVL_SUB_DECISIONS);
 
 	local pathfinder = MyRoadPF();
 	//local pathfinder = WayFinder();
 
 	local play_slow = AIController.GetSetting("slow_ai");
 
-	Helper.SetSign(tile1, "from");
-	Helper.SetSign(tile2, "to");
+	Helper.SetSign(tile1, "from" + call_count);
+	Helper.SetSign(tile2, "to" + call_count);
 
 	pathfinder.InitializePath([tile1], [tile2]);
 	pathfinder.cost.no_existing_road = repair_existing? 300 : 60; // default = 40
 	pathfinder.cost.tile = 80; // default = 100
+	pathfinder.cost.max_bridge_length = 15; // default = 10
+
+	// Set maximum cost as some constant plus a factor times the cost of the optimal path to avoid to long detours
+	// factor = 5/2 aka 2,5
+	pathfinder.cost.max_cost = 7000 + (pathfinder.cost.tile * AIMap.DistanceManhattan(tile1, tile2) * 5) / 2 + pathfinder.cost.turn;
 
 	local path = false;
 	local i = 0;
+	local STEP_SIZE = 100;
 	while (path == false) {
-		path = pathfinder.FindPath(100);
+		path = pathfinder.FindPath(STEP_SIZE);
 		AIController.Sleep(1);
 
 		if(play_slow == 1)
 			AIController.Sleep(5);
 
-		i += 100;
+		i += STEP_SIZE;
+		this.pf_loops_used += STEP_SIZE;
 
 		if (max_loops != -1 && i > max_loops)
 		{
-			AILog.Info("Finding path took to long -> abort");
+			Log.Info("Finding path took to long -> abort", Log.LVL_SUB_DECISIONS);
 			return RoadBuilder.CONNECT_FAILED_TIME_OUT;
 		}
 	}
 
-	AILog.Info("loops used:" + i);
+	Log.Info("PF loops used:" + i, Log.LVL_DEBUG);
 
 	if(path == null) {
-		AILog.Info("Failed to find path");
+		Log.Warning("Failed to find path", Log.LVL_INFO);
 		return RoadBuilder.CONNECT_FAILED_NO_PATH_FOUND;
 	}
-	AILog.Info("Path found, now start building!");
+	Log.Info("Path found, now start building!", Log.LVL_INFO);
 
 	//AISign.BuildSign(path.GetTile(), "Start building");
 
@@ -183,13 +209,13 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 							
 							if (new_par == null)
 							{
-								AILog.Warning("Tried to convert rail crossing to bridge but somehow got lost from the found path.");
+								Log.Warning("Tried to convert rail crossing to bridge but somehow got lost from the found path.", Log.LVL_INFO);
 							}
 							par = new_par;
 						}
 						else
 						{
-							AILog.Info("Failed to bridge railway crossing");
+							Log.Info("Failed to bridge railway crossing", Log.LVL_INFO);
 						}
 					}
 
@@ -221,11 +247,16 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 						/* An error occured while building a piece of road. TODO: handle it. 
 						 * Note that is can also be the case that the road was already build. */
 
+						Helper.SetSign(straight_begin.GetTile(), "fail from");
+						Helper.SetSign(straight_end.GetTile(), "fail to");
+						Log.Warning("Build straight failed", Log.LVL_SUB_DECISIONS);
+
+
 						// Try PF again
 						if (call_count > 4 || 
-								RoadBuilder.ConnectTiles(tile1, path.GetTile(), call_count+1) != RoadBuilder.CONNECT_SUCCEEDED)
+								RoadBuilder.ConnectTiles(tile1, path.GetTile(), false, Helper.Max(max_loops, 4000), call_count+1) != RoadBuilder.CONNECT_SUCCEEDED)
 						{
-							AILog.Info("After several tries the road construction could still not be completed");
+							Log.Warning("After several tries the road construction could still not be completed", Log.LVL_INFO);
 							return RoadBuilder.CONNECT_FAILED_OUT_OF_TRIES;
 						}
 						else
@@ -238,8 +269,50 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 						AIController.Sleep(10);
 				}
 			} else {
-				/* Build a bridge or tunnel. */
-				if (!AIBridge.IsBridgeTile(path.GetTile()) && !AITunnel.IsTunnelTile(path.GetTile())) {
+				if (AIBridge.IsBridgeTile(path.GetTile())) {
+					/* A bridge exists */
+
+					Helper.SetSign(path.GetTile(), "bridge exists", false);
+
+					// Check if it is a bridge with low speed
+					local bridge_type_id = AIBridge.GetBridgeID(path.GetTile())
+					local bridge_max_speed = AIBridge.GetMaxSpeed(bridge_type_id);
+
+					if(bridge_max_speed < 100) // low speed bridge
+					{
+						Helper.SetSign(path.GetTile(), "exists slow", false);
+
+						local other_end_tile = AIBridge.GetOtherBridgeEnd(path.GetTile());
+						local bridge_length = AIMap.DistanceManhattan( path.GetTile(), other_end_tile ) + 1;
+						local bridge_list = AIBridgeList_Length(bridge_length);
+
+						bridge_list.Valuate(AIBridge.GetMaxSpeed);
+						bridge_list.KeepAboveValue(bridge_max_speed);
+
+						if(!bridge_list.IsEmpty())
+						{
+							Helper.SetSign(path.GetTile(), "exists upgrade", false);
+							// There is a faster bridge
+
+							// Pick a random faster bridge than the current one
+							bridge_list.Valuate(AIBase.RandItem);
+							bridge_list.Sort(AIAbstractList.SORT_BY_VALUE, AIAbstractList.SORT_ASCENDING);
+
+							Log.Info("Try to upgrade slow existing bridge", Log.LVL_SUB_DECISIONS);
+
+							// Upgrade the bridge
+							AIBridge.BuildBridge( AIVehicle.VT_ROAD, bridge_list.Begin(), path.GetTile(), other_end_tile );
+
+							Log.Info("Upgrade err: " + AIError.GetLastErrorString() );
+						}
+					}
+
+				} else if(AITunnel.IsTunnelTile(path.GetTile())) {
+					/* A tunnel exists */
+					
+					// All tunnels have equal speed so nothing to do
+				} else {
+					/* Build a bridge or tunnel. */
 
 					/* If it was a road tile, demolish it first. Do this to work around expended roadbits. */
 					if (AIRoad.IsRoadTile(path.GetTile()) && 
@@ -250,14 +323,14 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 					if (AITunnel.GetOtherTunnelEnd(path.GetTile()) == par.GetTile()) {
 						if (!AITunnel.BuildTunnel(AIVehicle.VT_ROAD, path.GetTile())) {
 							/* An error occured while building a tunnel. TODO: handle it. */
-							AILog.Info("Build tunnel error: " + AIError.GetLastErrorString());
+							Log.Info("Build tunnel error: " + AIError.GetLastErrorString(), Log.LVL_INFO);
 						}
 					} else {
 						local bridge_list = AIBridgeList_Length(AIMap.DistanceManhattan(path.GetTile(), par.GetTile()) +1);
 						bridge_list.Valuate(AIBridge.GetMaxSpeed);
 						if (!AIBridge.BuildBridge(AIVehicle.VT_ROAD, bridge_list.Begin(), path.GetTile(), par.GetTile())) {
 							/* An error occured while building a bridge. TODO: handle it. */
-							AILog.Info("Build bridge error: " + AIError.GetLastErrorString());
+							Log.Info("Build bridge error: " + AIError.GetLastErrorString(), Log.LVL_INFO);
 						}
 					}
 
@@ -267,8 +340,10 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 			}
 		}
 		path = par;
+		this.build_loops_used += 1;
 	}
 
+	Log.Info("Build loops used:" + this.build_loops_used, Log.LVL_DEBUG);
 	//AISign.BuildSign(tile1, "Done");
 
 	// Remove the from/to signs now that the road was successfully built
@@ -276,6 +351,16 @@ function RoadBuilder::ConnectTiles(tile1, tile2, call_count, repair_existing = f
 	Helper.SetSign(tile2, "");
 
 	return RoadBuilder.CONNECT_SUCCEEDED;
+}
+
+function RoadBuilder::GetPFLoopsUsed()
+{
+	return this.pf_loops_used;
+}
+
+function RoadBuilder::GetBuildLoopsUsed()
+{
+	return this.build_loops_used;
 }
 
 function RoadBuilder::GetVehicleLocations()
@@ -348,7 +433,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			AIBridge.IsBridgeTile(tile_before) ||
 			AITunnel.IsTunnelTile(tile_before))
 	{
-		AILog.Info("Fail 1");
+		Log.Info("Fail 1", Log.LVL_INFO);
 		return { succeeded = false, permanently = true };
 	}
 
@@ -357,7 +442,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			AIBridge.IsBridgeTile(tile_after) ||
 			AITunnel.IsTunnelTile(tile_after))
 	{
-		AILog.Info("Fail 2");
+		Log.Info("Fail 2", Log.LVL_INFO);
 		return { succeeded = false, permanently = true };
 	}
 
@@ -371,8 +456,8 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	if ( (tile_before_owner != -1 && !AICompany.IsMine(tile_before_owner)) || 
 			(tile_after_owner != -1 && !AICompany.IsMine(tile_after_owner)) )
 	{
-		AILog.Info("Not my road - owned by " + tile_before_owner + ": " + AICompany.GetName(tile_before_owner) + " and " + tile_after_owner + ":" + AICompany.GetName(tile_after_owner));
-		AILog.Info("Fail 3");
+		Log.Info("Not my road - owned by " + tile_before_owner + ": " + AICompany.GetName(tile_before_owner) + " and " + tile_after_owner + ":" + AICompany.GetName(tile_after_owner), Log.LVL_INFO);
+		Log.Info("Fail 3", Log.LVL_INFO);
 		return { succeeded = false, permanently = true };
 	}
 
@@ -388,7 +473,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 
 		if (AIRoad.AreRoadTilesConnected(end_tile, left_tile) || AIRoad.AreRoadTilesConnected(end_tile, right_tile))
 		{
-			AILog.Info("Fail 4");
+			Log.Info("Fail 4", Log.LVL_INFO);
 			return { succeeded = false, permanently = true };
 		}
 	}
@@ -405,7 +490,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	local before_dn_slope = Tile.IsDownSlope(tile_before, backward_dir);
 	local same_height = AITile.GetMaxHeight(tile_after) == AITile.GetMaxHeight(tile_before);
 
-	AILog.Info("after_dn_slope = " + after_dn_slope + " | before_dn_slope = " + before_dn_slope + " | same_height = " + same_height);
+	Log.Info("after_dn_slope = " + after_dn_slope + " | before_dn_slope = " + before_dn_slope + " | same_height = " + same_height, Log.LVL_INFO);
 
 	if (Tile.IsDownSlope(tile_after, forward_dir) && Tile.IsDownSlope(tile_before, backward_dir) &&
 		AITile.GetMaxHeight(tile_after) == AITile.GetMaxHeight(tile_before)) // Make sure the tunnel entrances are at the same height
@@ -426,7 +511,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			// ____________________
 			//         rail
 			bridge = (Tile.IsBuildOnSlope_UpSlope(tile_before, backward_dir) && Tile.IsBuildOnSlope_UpSlope(tile_after, forward_dir)) ||
-					(Tile.IsBuildOnSlope_FlatInDirection(tile_before, forward_dir) && Tile.IsBuildOnSlope_FlatInDirection(tile_after, forward_dir));
+					(Tile.IsBuildOnSlope_FlatForBridgeInDirection(tile_before, forward_dir) && Tile.IsBuildOnSlope_FlatForBridgeInDirection(tile_after, forward_dir));
 		}
 		else if (AITile.GetMaxHeight(tile_before) == AITile.GetMaxHeight(tile_after) + 1) // tile before is one higher
 		{
@@ -434,7 +519,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			//        \____________
 			//         rail
 
-			bridge = Tile.IsBuildOnSlope_UpSlope(tile_before, backward_dir) && Tile.IsBuildOnSlope_FlatInDirection(tile_after, forward_dir);
+			bridge = Tile.IsBuildOnSlope_UpSlope(tile_before, backward_dir) && Tile.IsBuildOnSlope_FlatForBridgeInDirection(tile_after, forward_dir);
 
 		}
 		else if (AITile.GetMaxHeight(tile_before) + 1 == AITile.GetMaxHeight(tile_after)) // tile after is one higher
@@ -443,7 +528,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			// ____________/
 			//         rail
 
-			bridge = Tile.IsBuildOnSlope_FlatInDirection(tile_before, forward_dir) && Tile.IsBuildOnSlope_UpSlope(tile_after, forward_dir);
+			bridge = Tile.IsBuildOnSlope_FlatForBridgeInDirection(tile_before, forward_dir) && Tile.IsBuildOnSlope_UpSlope(tile_after, forward_dir);
 		}
 		else // more than one level of height difference
 		{
@@ -453,7 +538,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	if (!tunnel && !bridge)
 	{
 		// Can neither make tunnel or build bridge
-		AILog.Info("Fail 5");
+		Log.Info("Fail 5", Log.LVL_INFO);
 		return { succeeded = false, permanently = true };
 	}
 
@@ -463,7 +548,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	{
 		if (bridge_list.IsEmpty())
 		{
-			AILog.Info("Fail 6");
+			Log.Info("Fail 6", Log.LVL_INFO);
 			return { succeeded = false, permanently = true };
 		}
 	}
@@ -474,8 +559,8 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			Tile.GetBridgeAboveStart(tile_before, Direction.TurnDirClockwise45Deg(backward_dir, 2)) != -1 || // check for bridge over the tile before rail orthogonal to the road dir
 			Tile.GetBridgeAboveStart(tile_after, Direction.TurnDirClockwise45Deg(backward_dir, 2)) != -1)    // check for bridge over the tile after rail orthogonal to the road dir
 	{
-		AILog.Info("There is a nearby bridge that blocks the new bridge");
-		AILog.Info("Fail 6.5");
+		Log.Info("There is a nearby bridge that blocks the new bridge", Log.LVL_INFO);
+		Log.Info("Fail 6.5", Log.LVL_INFO);
 		return { succeeded = false, permanently = true };
 	}
 
@@ -485,8 +570,8 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	AICompany.SetLoanAmount(AICompany.GetMaxLoanAmount());
 	if (AICompany.GetBankBalance(AICompany.COMPANY_SELF) < 20000)
 	{
-		AILog.Info("Found railway crossing that can be replaced, but bail out because of low founds.");
-		AILog.Info("Fail 7");
+		Log.Info("Found railway crossing that can be replaced, but bail out because of low founds.", Log.LVL_INFO);
+		Log.Info("Fail 7", Log.LVL_INFO);
 		return { succeeded = false, permanently = false };
 	}
 
@@ -528,7 +613,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			if(!veh_locations.IsEmpty())
 			{
 				// There is a non-crashed vehicle in the first of two tiles to remove -> wait so it does not get stuck
-				AILog.Info("Detected own vehicle in the way -> delay removing road");
+				Log.Info("Detected own vehicle in the way -> delay removing road", Log.LVL_INFO);
 				AIController.Sleep(5);
 				i++;
 
@@ -536,7 +621,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 				continue;
 			}
 
-			AILog.Info("Tile is clear -> remove road");
+			Log.Info("Tile is clear -> remove road", Log.LVL_INFO);
 			//Helper.SetSign(tile1, "clear");
 
 			// Try to remove from tile 1 to tile 2 since tile 1 is clear from own non-crashed vehicles
@@ -548,7 +633,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			// If there were a vehicle in the way
 			if(!result && last_error == AIError.ERR_NOT_ENOUGH_CASH)
 			{
-				AILog.Info("Not enough cach -> wait a little bit");
+				Log.Info("Not enough cach -> wait a little bit", Log.LVL_INFO);
 				AIController.Sleep(5);
 				i++;
 				continue;
@@ -562,33 +647,33 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 				// there.
 				if(last_error == AIError.ERR_VEHICLE_IN_THE_WAY)
 				{
-					AILog.Info("Failed to remove last tile because vehicle in the way")
+					Log.Info("Failed to remove last tile because vehicle in the way", Log.LVL_INFO)
 					i++;
 					AIController.Sleep(5);
 					continue;
 				}
 				else if(last_error = AIError.ERR_UNKNOWN)
 				{
-					AILog.Info("Couldn't remove last road bit because of unknown error - strange -> wait and try again");
+					Log.Info("Couldn't remove last road bit because of unknown error - strange -> wait and try again", Log.LVL_INFO);
 					i++;
 					AIController.Sleep(5);
 					continue;
 				}
 				else
 				{
-					AILog.Info("Couldn't remove last road bit because of unhandled error: " + AIError.GetLastErrorString() + " -> abort");
+					Log.Info("Couldn't remove last road bit because of unhandled error: " + AIError.GetLastErrorString() + " -> abort", Log.LVL_INFO);
 					break;
 				}
 			}
 			else if( (!result && last_error == AIError.ERR_VEHICLE_IN_THE_WAY) || result && AITile.HasTransportType(tile1, AITile.TRANSPORT_ROAD) )
 			{	
-				AILog.Info("Road was not removed, possible because a vehicle in the way");
+				Log.Info("Road was not removed, possible because a vehicle in the way", Log.LVL_INFO);
 
 				if(tile1 == tile_before)
 				{
 					// We can never skip to remove road from the tile before the railway crossing(s)
 					// as the bridge will start here
-					AILog.Info("Since this is the tile before the railway crossing the road MUST be removed -> wait and hope the vehicles go away");
+					Log.Info("Since this is the tile before the railway crossing the road MUST be removed -> wait and hope the vehicles go away", Log.LVL_INFO);
 					i++;
 					AIController.Sleep(5);
 					continue;
@@ -603,14 +688,14 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 				if(own_vehicle_locations.IsEmpty() && forigin_veh_in_the_way_counter < 5)
 				{
 					// The vehicle in the way is not one of our own crashed vehicles
-					AILog.Info("Detected vehicle in the way that is not our own. Wait a bit to see if it moves == non-crashed.");
+					Log.Info("Detected vehicle in the way that is not our own. Wait a bit to see if it moves == non-crashed.", Log.LVL_INFO);
 					forigin_veh_in_the_way_counter++;
 					i++
 					AIController.Sleep(5);
 					continue;
 				}
 
-				AILog.Info("Road was not removed, most likely because a crashed vehicle in the way -> move on");
+				Log.Info("Road was not removed, most likely because a crashed vehicle in the way -> move on", Log.LVL_INFO);
 
 				go_to_next_tile = true;
 			}
@@ -618,7 +703,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 			{
 				if (last_error == AIError.ERR_UNKNOWN)
 				{
-					AILog.Info("Couldn't remove road because of unknown error - strange -> wait and try again");
+					Log.Info("Couldn't remove road because of unknown error - strange -> wait and try again", Log.LVL_INFO);
 					Helper.SetSign(tile1, "strange");
 					i++;
 					AIController.Sleep(5);
@@ -626,7 +711,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 				}
 				else
 				{
-					AILog.Info("Couldn't remove road because " + AIError.GetLastErrorString());
+					Log.Info("Couldn't remove road because " + AIError.GetLastErrorString(), Log.LVL_INFO);
 					break;
 				}
 			}
@@ -641,7 +726,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 				// End _after_ the road has been removed up to tile_after
 				if(tile2 == tile_after)
 				{
-					AILog.Info("Road has been removed up to tile_after -> stop");
+					Log.Info("Road has been removed up to tile_after -> stop", Log.LVL_INFO);
 					break;
 				}
 
@@ -685,7 +770,7 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 
 					if(!veh_locations.IsEmpty()) // Only fail to remove road, if the road bit has a non-crashed (own) vehicle on it
 					{
-						AILog.Info("One of our own vehicles got stuck while removing the road. -> removing failed");
+						Log.Info("One of our own vehicles got stuck while removing the road. -> removing failed", Log.LVL_INFO);
 						remove_failed = true;
 						//Helper.SetSign(tile, "fail");
 						break;
@@ -696,12 +781,12 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 
 		if(remove_failed)
 		{
-			AILog.Info("Tried to remove road over rail for a while, but failed");
+			Log.Info("Tried to remove road over rail for a while, but failed", Log.LVL_INFO);
 
 			AIRoad.BuildRoadFull(tile_before, tile_after);
 			AIRoad.BuildRoadFull(tile_after, tile_before);
 
-			AILog.Info("Fail 8");
+			Log.Info("Fail 8", Log.LVL_INFO);
 		}
 	}
 
@@ -724,13 +809,13 @@ function RoadBuilder::ConvertRailCrossingToBridge(rail_tile, prev_tile)
 	if (build_failed)
 	{
 		local what = tunnel == true? "tunnel" : "bridge";
-		AILog.Warning("Failed to build " + what + " to cross rail because " + AIError.GetLastErrorString() + ". Now try to build road to repair the road.");
+		Log.Warning("Failed to build " + what + " to cross rail because " + AIError.GetLastErrorString() + ". Now try to build road to repair the road.", Log.LVL_INFO);
 		if(AIRoad.BuildRoadFull(tile_before, tile_after))
 		{
-			AILog.Error("Failed to repair road crossing over rail by building road because " + AIError.GetLastErrorString());
+			Log.Error("Failed to repair road crossing over rail by building road because " + AIError.GetLastErrorString(), Log.LVL_INFO);
 		}
 
-		AILog.Info("Fail 9");
+		Log.Info("Fail 9", Log.LVL_INFO);
 		return { succeeded = false, permanently = false };
 	}
 

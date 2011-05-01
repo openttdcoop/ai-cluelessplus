@@ -19,11 +19,11 @@
 // Author: Zuu (Leif Linse), user Zuu @ tt-forums.net
 // Purpose: To play around with the noai framework.
 //               - Not to make the next big thing.
-// Copyright: Leif Linse - 2008-2010
+// Copyright: Leif Linse - 2008-2011
 // License: GNU GPL - version 2
 
 
-import("util.superlib", "SuperLib", 3);
+import("util.superlib", "SuperLib", 7);
 
 Log <- SuperLib.Log;
 Helper <- SuperLib.Helper;
@@ -36,166 +36,25 @@ Engine <- SuperLib.Engine;
 Vehicle <- SuperLib.Vehicle;
 
 Station <- SuperLib.Station;
+Airport <- SuperLib.Airport;
 Industry <- SuperLib.Industry;
 
-//Order <- SuperLib.Order;
-//OrderList <- SuperLib.OrderList;
+Order <- SuperLib.Order;
+OrderList <- SuperLib.OrderList;
+
+import("queue.fibonacci_heap", "FibonacciHeap", 2);
 
 require("pairfinder.nut"); 
 require("sortedlist.nut");
 require("roadbuilder.nut"); 
 require("clue_helper.nut");
 require("stationstatistics.nut");
+require("strategy.nut");
+
+require("return_values.nut");
 
 
-
-//////////////////////////////////////////////////////////////////////
-//                                                                  //
-//  CLASS: TownFinder                                               //
-//                                                                  //
-//////////////////////////////////////////////////////////////////////
-class TownFinder
-{
-	// each item in search list is an array of these stuff:
-	// [0] => town ID
-	// [1] => town population
-	search_list = [];
-
-	conf_min_distance = 20;
-	conf_min_population = 150;
-
-	constructor() {
-		search_list = [];
-	}
-
-	function SelectSearchList();
-	function FindTwoTownsToConnectByRoad(maxDistance);
-	function SelectSearchList_CompareTownByPopulation(a, b);
-	function FindTwoTownsToConnectByRoad_CompareTownPairsByScore(a, b);
-}
-
-// Creates a sorted list of all towns (best first), and then shrink it to top 50.
-// The top 50-list is then stored list in this.search_list.
-function TownFinder::SelectSearchList(connection_list)
-{
-	local town_list = AITownList();
-	local list = [];
-	local population;
-
-	for(local town_id = town_list.Begin(); town_list.HasNext(); town_id = town_list.Next())
-	{
-		if(!AITown.IsValidTown(town_id) || ClueHelper.IsTownInConnectionList(connection_list, town_id))
-		{
-			//AILog.Info("Town no " + town_id + " is not a valid town or already connected, skip it");	
-		}
-		else
-		{
-			population = AITown.GetPopulation(town_id);
-			if(population >= this.conf_min_population)
-			{
-				list.append([town_id, population]);
-				//AILog.Info("appended town to list " + town_id);
-			}
-		}
-	}
-	list.sort(this.SelectSearchList_CompareTownByPopulation);
-	list.reverse();
-
-	if(list.len() > 50)
-	{
-		list.resize(50);
-	}
-
-	foreach(val in list)
-	{
-		//AILog.Info(val[0] + " (" + AITown.GetName(val[0]) + ") => " + val[1]);
-	}
-
-	this.search_list = list;
-}
-
-function TownFinder::SelectSearchList_CompareTownByPopulation(a, b)
-{
-	if(a[1] > b[1]) 
-		return 1
-	else if(a[1] < b[1]) 
-		return -1
-	return 0;
-}
-
-function TownFinder::FindTwoTownsToConnectByRoad(maxDistance)
-{
-	//AILog.Info("TownFinder::FindTwoTownsToConnectByRoad()");
-	local dist_weight = 1.5;
-	local pop_weight  = 1.0;
-	local desert_snow_weight = 200.0;
-
-	local list_pairs = ScoreList();
-	local i = 0;
-	local j = 0;
-
-	//AILog.Info(this.search_list.len());
-	for(i = 0; i < this.search_list.len(); i++)
-	{
-		for(j = i+1; j < this.search_list.len(); j++)
-		{
-			if(i != j)
-			{
-				local town1_location = AITown.GetLocation(this.search_list[i][0]);
-				local town2_location = AITown.GetLocation(this.search_list[j][0]);
-
-				local distance = ClueHelper.TownDistance(this.search_list[i][0], this.search_list[j][0]);
-				local total_population = this.search_list[i][1] + this.search_list[j][1];
-
-				// count the number of towns that are on snow/desert and thus will not grow unless another player supply it with required goods
-				local desert_snow_count = 0;
-				if(AITile.IsSnowTile(town1_location) || AITile.IsDesertTile(town1_location))
-					desert_snow_count++;
-				if(AITile.IsSnowTile(town2_location) || AITile.IsDesertTile(town2_location))
-					desert_snow_count++;
-
-				// give a bonus to pairs that are balanced in population or where either both or none of them are on desert/snow
-				local differity = Helper.Abs(this.search_list[i][1] - this.search_list[j][1]);
-				if(desert_snow_count == 1)
-					differity += 400;
-				local equity = 700 / (differity + 1); // add 1 to make sure we never divide by zero
-
-				// calculate total score
-				local t = ClueHelper.StepFunction(distance - maxDistance);
-				local score = total_population * pop_weight + 
-						distance * (1 - ClueHelper.StepFunction(distance - maxDistance))  * dist_weight +
-						(2 - desert_snow_count) * desert_snow_weight +
-						equity;
-				if( distance > maxDistance || distance < this.conf_min_distance || total_population < this.conf_min_population )
-				{
-					score = 0;
-				}
-				else
-				{
-					list_pairs.Push([this.search_list[i][0], this.search_list[j][0], score, distance, total_population], score);
-				}
-				//AILog.Info("For city " + AITown.GetName(this.search_list[i][0]) + " and " + AITown.GetName(this.search_list[j][0]) + " the score is: " + score + ". The distance is: " + distance + " and the total population is: " + total_population);
-			}
-		}
-	}
-
-	local best_town_pair = list_pairs.PopMax();
-
-	if(best_town_pair == null)
-		return null;
-
-	//AILog.Info("Best cities are: " + best_town_pair[0] + " and " + best_town_pair[1] + " with the score: " + best_town_pair[2]);
-	return [ best_town_pair[0], best_town_pair[1] ];
-}
-
-function TownFinder::FindTwoTownsToConnectByRoad_CompareTownPairsByScore(a, b)
-{
-	if(a[2] > b[2]) 
-		return 1
-	else if(a[2] < b[2]) 
-		return -1
-	return 0;
-}
+STATION_SAVE_VERSION <- "0";
 
 //////////////////////////////////////////////////////////////////////
 //                                                                  //
@@ -226,13 +85,17 @@ class Connection
 	node = null;
 
 	last_station_manage = null;
+	last_repair_route = null;
 	station_statistics = null; // array of pointers to StationStatistics objects for each station
 	max_station_usage = null;
+	max_station_tile_usage = null;
 
 	long_time_mean_income = 0;
 	
 	last_bus_buy = null;
 	last_bus_sell = null;
+
+	desired_engine = null;
 
 
 	static STATE_BUILDING = 0;
@@ -247,23 +110,28 @@ class Connection
 	
 	constructor(clueless_instance) {
 		this.clueless_instance = clueless_instance;
-		cargo_type = null;
-		date_built = null;
-		last_vehicle_manage = null;
-		town     = [];
-		industry = [];
-		node     = [];
-		station  = [null, null];
-		depot    = [null, null];
-		last_station_manage = null;
-		station_statistics = [];
-		max_station_usage = 0;
-		long_time_mean_income = 0;
-		state_change_date = 0;
+		this.cargo_type = null;
+		this.date_built = null;
+		this.last_vehicle_manage = null;
+		this.town     = [];
+		this.industry = [];
+		this.node     = [];
+		this.station  = [null, null];
+		this.depot    = [null, null];
+		this.last_station_manage = null;
+		this.last_repair_route = null;
+		this.station_statistics = [];
+		this.max_station_usage = 0;      // overall usage of the station with highest overall usage
+		this.max_station_tile_usage = 0; // usage of the tile with highest usage
+		this.long_time_mean_income = 0;
+		this.state_change_date = 0;
 		this.SetState(Connection.STATE_BUILDING);
-		last_bus_buy = null;
-		last_bus_sell = null;
+		this.last_bus_buy = null;
+		this.last_bus_sell = null;
+		this.desired_engine = null;
 	}
+
+	function GetName();
 
 	function SetState(newState);
 
@@ -284,6 +152,7 @@ class Connection
 	function NumVehiclesToBuy(connection);
 
 	function GetVehicles();
+	function GetBrokenVehicles(); // Gets broken vehicles that stops at any of the stations
 
 	// Change order functions
 	function FullLoadAtStations(enable_full_load);
@@ -292,6 +161,23 @@ class Connection
 	function SkipAllVehiclesToClosestDepot();
 
 	function RepairRoadConnection();
+
+	// Engine type management
+	function FindNewDesiredEngineType();
+	function MassUpgradeVehicles();
+
+	static function IsVehicleToldToUpgrade(vehicle_id);
+	static function GetVehicleUpgradeToEngine(vehicle_id);
+}
+
+function Connection::GetName()
+{
+	// Quick version if the connection is okay.
+	if(node.len() == 2 && node[0] != null && node[1] != null)
+		return node[0].GetName() + " - " + node[1].GetName();
+
+	// If one or more node is broken:
+	return "[broken connection]";
 }
 
 function Connection::SetState(newState)
@@ -319,7 +205,10 @@ function Connection::ReActivateConnection()
 	{
 		if(AIOrder.IsGotoDepotOrder(veh_id, i_order))
 		{
-			AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | AIOrder.AIOF_SERVICE_IF_NEEDED);
+			// Always go to depot if breakdowns are "normal", otherwise only go if needed
+			local service_flag = AIGameSettings.GetValue("vehicle_breakdowns") == 2? 0 : AIOrder.AIOF_SERVICE_IF_NEEDED;
+
+			AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | service_flag);
 		}
 	}
 
@@ -370,14 +259,19 @@ function Connection::CloseConnection()
 {
 	Log.Info("CloseConnection " + node[0].GetName() + " - " + node[1].GetName(), Log.LVL_INFO);
 
+	if(this.state == Connection.STATE_CLOSING_DOWN || this.state == Connection.STATE_CLOSED_DOWN || this.state == Connection.STATE_FAILED)
+	{
+		Log.Warning("CloseConnection fails because the current state ( " + this.state + " ) of the connection does not allow initiating the closing down process.");
+		return false;
+	}
+
 	// Send all vehicles to depot for selling and set state STATE_CLOSING_DOWN
 	this.SetState(Connection.STATE_CLOSING_DOWN);
 
 	local vehicle_list = this.GetVehicles();
 	if(vehicle_list.IsEmpty())
 	{
-		Log.Warning("CloseConnection fails because connection " + node[0].GetName() + " - " + node[1].GetName() + " do not have any vehicles.", Log.LVL_INFO);
-		return false;
+		return true;
 	}
 
 	// Change orders so that vehicles will stay at the depots when they go there. 
@@ -430,37 +324,9 @@ function Connection::GetTotalDistance()
 
 	return AIMap.DistanceManhattan( this.node[0].GetLocation(), this.node[1].GetLocation() );
 }
-function Connection::EngineBuyScore(engine)
-{
-	// Use the product of speed and capacity
-	return AIEngine.GetMaxSpeed(engine) * AIEngine.GetCapacity(engine);
-}
 function Connection::FindEngineModelToBuy()
 {
-	// find a bus model to buy
-	local bus_list = AIEngineList(AIVehicle.VT_ROAD);
-
-	// Get engines that can be refited to the wanted cargo
-	bus_list.Valuate(AIEngine.CanRefitCargo, this.cargo_type)
-	bus_list.KeepValue(1); 
-
-	// Exclude articulated vehicles
-	bus_list.Valuate(AIEngine.IsArticulated)
-	bus_list.KeepValue(0); 
-
-	// Exclude trams
-	bus_list.Valuate(AIEngine.GetRoadType);
-	bus_list.KeepValue(AIRoad.ROADTYPE_ROAD);
-
-	// Exclude engines that can't be built
-	bus_list.Valuate(AIEngine.IsBuildable)
-	bus_list.KeepValue(1); 
-
-	// Buy the vehicle with highest score
-	bus_list.Valuate(Connection.EngineBuyScore)
-	bus_list.KeepTop(1);
-
-	return bus_list.IsEmpty()? -1 : bus_list.Begin();
+	return Strategy.FindEngineModelToBuy(this.cargo_type, AIVehicle.VT_ROAD);
 }
 function Connection::BuyVehicles(num_vehicles, engine_id)
 {
@@ -512,6 +378,23 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 				AIVehicle.SellVehicle(new_bus);
 				new_bus = -1;
 			}
+
+			// Store current state in vehicle name
+			if(this.state == Connection.STATE_SUSPENDED)
+				ClueHelper.StoreInVehicleName(new_bus, "suspended");
+			else if(this.state == Connection.STATE_ACTIVE)
+				ClueHelper.StoreInVehicleName(new_bus, "active");
+			else if(this.state == Connection.STATE_CLOSING_DOWN)  // There is not really a reason to buy vehicles in this state!
+				ClueHelper.StoreInVehicleName(new_bus, "close conn");
+			else if(this.state == Connection.STATE_BUILDING) 
+			{ }
+			else if(this.state == null) // build state
+				ClueHelper.StoreInVehicleName(new_bus, "active");
+			else
+			{
+				Log.Warning("Built vehicle while in state " + this.state, Log.LVL_INFO);
+			}
+
 		}
 
 		if(!AIVehicle.IsValidVehicle(new_bus)) // if failed to buy last vehicle
@@ -538,7 +421,7 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 				if(!AIEngine.IsBuildable(engine_id))
 					Log.Warning("Engine not buildable!", Log.LVL_INFO);
 
-				Log.Warning("Failed to build bus/truck", Log.LVL_INFO);
+				Log.Warning("Failed to buy bus/truck", Log.LVL_INFO);
 				return false; // if no bus have been built, return false
 			}
 			else
@@ -567,9 +450,12 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 		}
 		else
 		{
-			AIOrder.AppendOrder(new_bus, depot[0], AIOrder.AIOF_SERVICE_IF_NEEDED);
+			// Always go to depot if breakdowns are "normal", otherwise only go if needed
+			local service_flag = AIGameSettings.GetValue("vehicle_breakdowns") == 2? 0 : AIOrder.AIOF_SERVICE_IF_NEEDED;
+
+			AIOrder.AppendOrder(new_bus, depot[0], service_flag);
 			AIOrder.AppendOrder(new_bus, station[0], AIOrder.AIOF_NON_STOP_INTERMEDIATE); 
-			AIOrder.AppendOrder(new_bus, depot[1], AIOrder.AIOF_SERVICE_IF_NEEDED);  
+			AIOrder.AppendOrder(new_bus, depot[1], service_flag);  
 			AIOrder.AppendOrder(new_bus, station[1], AIOrder.AIOF_NON_STOP_INTERMEDIATE);
 
 			share_orders_with = new_bus;
@@ -591,7 +477,11 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 		if(i%2 == 1)
 			AIController.Sleep(20);
 
-		AIVehicle.StartStopVehicle(new_buses[i]);
+		// Don't start new vehicles if connection is suspended
+		if(this.state != Connection.STATE_SUSPENDED)
+			AIVehicle.StartStopVehicle(new_buses[i]);
+		else
+			Log.Info("Don't start new vehicle (" + AIVehicle.GetName(new_buses[i]) + " because connection is suspended", Log.LVL_SUB_DECISIONS);
 	}
 
 	this.last_bus_buy = AIDate.GetCurrentDate();
@@ -603,42 +493,52 @@ function Connection::NumVehiclesToBuy(engine_id)
 {
 	local distance = GetTotalDistance().tofloat();
 	local speed = AIEngine.GetMaxSpeed(engine_id);
-	local travel_time = Engine.GetFullSpeedTraveltime(engine_id, distance);
+	local travel_time = 5 + Engine.GetFullSpeedTraveltime(engine_id, distance);
 	local capacity = AIEngine.GetCapacity(engine_id);
+
+	Log.Info("NumVehiclesToBuy(): distance: " + distance, Log.LVL_SUB_DECISIONS);
+	Log.Info("NumVehiclesToBuy(): travel time: " + travel_time, Log.LVL_SUB_DECISIONS);
+	Log.Info("NumVehiclesToBuy(): capacity:  " + capacity + " cargo_type: " + cargo_type + " engine_id: " + engine_id, Log.LVL_SUB_DECISIONS);
 
 	if(this.IsTownOnly())
 	{
 		// Town only connections
 		local population = GetTotalPoputaltion().tofloat();
 
-		Log.Info("NumVehiclesToBuy(): distance between towns: " + distance, Log.LVL_SUB_DECISIONS);
 		Log.Info("NumVehiclesToBuy(): total town population:  " + population, Log.LVL_SUB_DECISIONS);
-		Log.Info("NumVehiclesToBuy(): capacity:  " + capacity + " cargo_type: " + cargo_type + " engine_id: " + engine_id, Log.LVL_SUB_DECISIONS);
 
-		local num_bus = 1 + max(0, ((population - 200) / capacity / 15).tointeger());
+		local num_bus = 1 + max(0, (Helper.Min(1400, population - 200) / capacity / 15).tointeger());
 		local extra = distance/capacity/3;
 		num_bus += extra;
 		Log.Info("NumVehiclesToBuy(): extra:  " + extra, Log.LVL_SUB_DECISIONS);
 
 		num_bus = num_bus.tointeger();
 
-		Log.Info("Buy " + num_bus + " vehicles", Log.LVL_SUB_DECISIONS);
+		Log.Info("NumVehiclesToBuy(): Buy " + num_bus + " vehicles", Log.LVL_SUB_DECISIONS);
 		return num_bus;
 	}
 	else
 	{
 		// All other connections
 		local max_cargo_available = Helper.Max(this.node[0].GetCargoAvailability(), this.node[1].GetCargoAvailability());
-		local num_veh = (capacity * travel_time / 83).tointeger();
+		Log.Info("NumVehiclesToBuy(): cargo availability: " + max_cargo_available, Log.LVL_SUB_DECISIONS);
 
-		Log.Info("Buy " + num_veh + " vehicles", Log.LVL_SUB_DECISIONS);
+		// * 70 / 100 => assume 90% station rating
+		local tor_month_to_days = 30;
+		local tor_production = max_cargo_available * 70 / 100 * (travel_time * 2) / tor_month_to_days;
+		local num_veh = 2 + (tor_production / capacity).tointeger();
+
+		// Old num_veh code:
+		//local num_veh = (travel_time * capacity / 83).tointeger();
+
+		Log.Info("NumVehiclesToBuy(): Buy " + num_veh + " vehicles", Log.LVL_SUB_DECISIONS);
 		return num_veh;
 	}
 }
 
 function Connection::ManageState()
 {
-	Log.Info("Manage connection state - state: " + this.state + " - " + node[0].GetName() + " - " + node[1].GetName(), Log.LVL_INFO);
+	Log.Info("Manage connection state - state: " + this.state + " - " + node[0].GetName() + " - " + node[1].GetName(), Log.LVL_SUB_DECISIONS);
 
 	// Check if there is at least one working transport direction. Working in this case is that
 	// one end produces the cargo and another end accpts it.
@@ -656,7 +556,15 @@ function Connection::ManageState()
 			// One industry has closed down or town station has lost accept/produce status
 			// -> CloseConnection
 
-			Log.Info("Connection do no longer has at least one producer-accepter pair -> close it down", Log.LVL_DEBUG);
+			Log.Info("Connection do no longer has at least one producer-accepter pair -> close connection", Log.LVL_DEBUG);
+			this.CloseConnection();
+			return;
+		}
+
+		// Check if any of the (industry) nodes has disappeared. That is if the industry is gone or has moved elsewhere. 
+		if(this.node[0].HasNodeDissapeared() || this.node[1].HasNodeDissapeared())
+		{
+			Log.Info("One or more of the nodes (town/industry) of connection has disappeared -> close connection", Log.LVL_DEBUG);
 			this.CloseConnection();
 			return;
 		}
@@ -721,7 +629,13 @@ function Connection::ManageState()
 				{
 					// One of the producing nodes is a non-raw node -> suspend connection for a while
 					// and hope that the industry will start produce cargo again
-					this.SuspendConnection();
+
+					// However, if the stations are not much in use, it is better to keep the connection
+					// active to not cause bad station ratings.
+					if(this.max_station_usage > 135 || this.max_station_tile_usage > 180)
+					{
+						this.SuspendConnection();
+					}
 				}
 				else if(zero_raw_production)
 				{
@@ -730,11 +644,20 @@ function Connection::ManageState()
 				}
 			}
 		}
+
+		if(this.node[0].HasNodeDissapeared() || this.node[1].HasNodeDissapeared())
+		{
+			Log.Info("A node has dissapeared from connection " + this.GetName() + " => close it down", Log.LVL_INFO);
+			this.CloseConnection();
+			return;
+		}
 	}
 	else if(this.state == Connection.STATE_SUSPENDED)
 	{
 		local now = AIDate.GetCurrentDate();
 		local suspended_time = now - this.state_change_date;
+
+		Log.Info("Connection has been suspended for " + suspended_time + " days");
 
 		// Check if the connection has been suspended for at least 35 days
 		if(suspended_time > 35)
@@ -781,6 +704,8 @@ function Connection::ManageState()
 			// Demolish stations
 			foreach(station_tile in this.station)
 			{
+				Helper.SetSign(station_tile, "close conn");
+
 				local station_id = AIStation.GetStationID(station_tile);
 
 				// Remember the front tiles for later road removal 
@@ -793,13 +718,62 @@ function Connection::ManageState()
 			// Demolish depots
 			foreach(depot in this.depot)
 			{
+				Helper.SetSign(depot, "close conn");
 				local front = AIRoad.GetRoadDepotFrontTile(depot);
 
 				// Remember the front tile for later road removal
 				front_tiles.AddItem(front, 0);
 
 				// Demolish depot
-				AITile.DemolishTile(depot);
+				if(AIRoad.IsRoadDepotTile(depot) && !AITile.DemolishTile(depot))
+				{
+					if(AIError.GetLastError() == AIError.ERR_VEHICLE_IN_THE_WAY)
+					{
+						local sell_failed = false;
+						local vehicles_in_depot = Vehicle.GetVehiclesAtTile(depot);
+						foreach(veh_in_depot, _ in vehicles_in_depot)
+						{
+							if(!AIVehicle.IsStoppedInDepot(veh_in_depot))
+							{
+								// The vehicle is not stoped in depot
+								// -> Try to stop it and see if it is now stopped in the depot
+								AIVehicle.StartStopVehicle(veh_in_depot);
+								if(!AIVehicle.IsStoppedInDepot(veh_in_depot))
+								{
+									// The vehicle is stoped, but not in the depot
+									// -> Start it again
+									AIVehicle.StartStopVehicle(veh_in_depot);
+									sell_failed = true;
+									continue;
+								}
+							}
+
+							AIVehicle.SellVehicle(veh_in_depot);
+						}
+
+						if(sell_failed)
+						{
+							Log.Warning("Error while removing depot for closing down connection: There was a vehicle in the way half way on the way in or out of the depot -> could not sell it", Log.LVL_INFO);
+							Log.Info("-> abort closing connection for now", Log.LVL_INFO);
+							// Abort closing down for a while
+							return;
+						}
+
+						// Now the depot should be empty of vehicles
+						if(!AITile.DemolishTile(depot))
+						{
+							Log.Warning("Error: Failed to demolish depot even after having tried to sell vehicles that are in the way", Log.LVL_INFO);
+							Log.Info("-> abort closing connection for now", Log.LVL_INFO);
+							return;
+						}
+					}
+					else
+					{
+						Log.Warning("Could not demolish depot because of " + AIError.GetLastErrorString());
+						Log.Info("-> abort closing connection for now", Log.LVL_INFO);
+						return;
+					}
+				}
 				AIRoad.RemoveRoad(front, depot);
 			}
 
@@ -832,24 +806,39 @@ function Connection::ManageStations()
 		return;
 	this.last_station_manage = now;
 
-	Log.Info("Manage Stations", Log.LVL_INFO);
+	Log.Info("Manage Stations: " + this.GetName(), Log.LVL_INFO);
 
 	// Update station statistics
-	local max_usage = 0;
+	local max_station_usage = 0;
+	local max_station_tile_usage = 0;
 
 	for(local i = 0; i < this.station.len(); ++i)
 	{
 		local station_tile = this.station[i];
 		local station_statistics = this.station_statistics[i];
 
+		// Close connection if one of the stations are invalid
+		if(!AIStation.IsValidStation(AIStation.GetStationID(station_tile)))
+		{
+			Log.Warning("An invalid station was detected -> Close connection", Log.LVL_INFO);
+			CloseConnection();
+			return;
+		}
+
 		station_statistics.ReadStatisticsData();
 
 		local usage = Helper.Max(station_statistics.usage.bus.percent_usage, station_statistics.usage.truck.percent_usage);
-		if(usage > max_usage)
-			max_usage = usage;
+		local max_tile_usage = Helper.Max(station_statistics.usage.bus.percent_usage_max_tile, station_statistics.usage.truck.percent_usage_max_tile);
+
+		if(usage > max_station_usage)
+			max_station_usage = usage;
+
+		if(max_tile_usage > max_station_tile_usage)
+			max_station_tile_usage = max_tile_usage;
 	}
 
-	this.max_station_usage = max_usage;
+	this.max_station_usage = max_station_usage;
+	this.max_station_tile_usage = max_station_tile_usage;
 
 	// Check that all station parts are connected to road
 	for(local town_i = 0; town_i < 2; town_i++)
@@ -885,7 +874,7 @@ function Connection::ManageStations()
 							if(this.station[town_i] == stop_tile)
 							{
 								// Repair the station variable (it should be a tile of the station, but the tile it contains no longer contains a stop)
-								this.station[town_id] = AIBaseStation.GetLocation(station_id);
+								this.station[town_i] = AIBaseStation.GetLocation(station_id);
 							}
 						}
 					}
@@ -906,7 +895,7 @@ function Connection::ManageStations()
 		local percent_usage = [Helper.Max(station_statistics[0].usage.bus.percent_usage, station_statistics[0].usage.truck.percent_usage),
 				Helper.Max(station_statistics[1].usage.bus.percent_usage, station_statistics[1].usage.truck.percent_usage) ];
 
-		Log.Info("Checking if connection " + node[0].GetName() + " - " + node[1].GetName() + " needs more bus stops", Log.LVL_INFO);
+		Log.Info("Checking if connection " + node[0].GetName() + " - " + node[1].GetName() + " needs more bus stops", Log.LVL_SUB_DECISIONS);
 		Log.Info("bus usage: " + percent_usage[0] + ", " + percent_usage[0], Log.LVL_SUB_DECISIONS);
 		Log.Info("pax waiting: " + station_statistics[0].cargo_waiting + ", " + station_statistics[1].cargo_waiting, Log.LVL_SUB_DECISIONS);
 
@@ -914,7 +903,7 @@ function Connection::ManageStations()
 		if( (percent_usage[0] > 150 && station_statistics[0].cargo_waiting > 150) ||
 			(percent_usage[0] > 250) ||
 			(percent_usage[1] > 150 && station_statistics[1].cargo_waiting > 150) ||
-			(percent_usage[1] > 250))
+			(percent_usage[1] > 250) )
 		{
 			for(local town_i = 0; town_i < 2; town_i++)
 			{
@@ -938,10 +927,20 @@ function Connection::ManageStations()
 				}
 
 				Log.Info("Grow station for town/industry " + node[town_i].GetName(), Log.LVL_INFO);
-	
-				if(this.clueless_instance.GrowStation(station_id, station_type))
+
+				// Try to first grow in parallel and then if it fails for some other reason than out of money,
+				// fall back to the classic grow function
+				local grown_parallel_ret = this.clueless_instance.GrowStationParallel(station_id, station_type);
+				local grown = IsSuccess(grown_parallel_ret);
+				if(!grown && grown_parallel_ret != RETURN_NOT_ENOUGH_MONEY)
+					grown = IsSuccess(this.clueless_instance.GrowStation(station_id, station_type));
+
+				if(grown)
 				{
 					Log.Info("Station has been grown with one bus stop", Log.LVL_INFO);
+
+					if(IsSuccess(grown_parallel_ret))
+						Log.Info("Growing was done in parallel", Log.LVL_INFO);
 
 					// Change the usage so that it is percent of new capacity, so that the AI don't quickly add another bus stop before the
 					// statistics adopt to the new capacity.
@@ -951,13 +950,43 @@ function Connection::ManageStations()
 					Log.Info("old usage = " + percent_usage[town_i] + "  new usage = " + new_usage, Log.LVL_SUB_DECISIONS);
 
 					if(station_type == AIStation.STATION_BUS_STOP)
+					{
 						this.station_statistics[town_i].usage.bus.percent_usage = new_usage;
+					}
 					if(station_type == AIStation.STATION_TRUCK_STOP)
-						this.station_statistics[town_i].usage.bus.percent_usage = new_usage;
+					{
+						this.station_statistics[town_i].usage.truck.percent_usage = new_usage;
+					}
 
 					this.station_statistics[town_i].ReadStatisticsData();
 				}
 
+			}
+		}
+	}
+
+	// Check if we should buy a statue in the town
+	for(local town_i = 0; town_i < 2; town_i++)
+	{
+		local tile = this.station[town_i];
+		local town = AITile.GetClosestTown(tile);
+		local prod = this.node[town_i].GetCargoAvailability(); // don't build statues in town if we only deliver cargo there
+
+		if(prod > 0 && !AITown.HasStatue(town))
+		{
+			local statue_cost = -1;
+			{
+				local tm = AITestMode();
+				local am = AIAccounting();
+
+				if(AITown.PerformTownAction(town, AITown.TOWN_ACTION_BUILD_STATUE))
+					statue_cost = am.GetCosts();
+			}
+
+			if(AICompany.GetBankBalance(AICompany.COMPANY_SELF) > statue_cost * 10)
+			{
+				// Build statue if we have 10 times the money it costs
+				AITown.PerformTownAction(town, AITown.TOWN_ACTION_BUILD_STATUE);
 			}
 		}
 	}
@@ -977,8 +1006,21 @@ function Connection::ManageVehicles()
 	//AISign.BuildSign(this.station[0], "manage");
 	//AISign.BuildSign(this.station[1], "manage");
 
+	// Sell vehicles that has one of the stations as order, but has at
+	// least one invalid order
+	local broken_vehicles = GetBrokenVehicles();
+	if(!broken_vehicles.IsEmpty())
+	{
+		foreach(veh, _ in broken_vehicles)
+		{
+			Log.Info("Send vehicle " + AIVehicle.GetName(veh) + " for selling because the connection found that it is broken", Log.LVL_SUB_DECISIONS);
+			SendVehicleForSelling(veh);
+		}
+	}
+
 	local now = AIDate.GetCurrentDate();
-	if( ((last_vehicle_manage == null && AIDate.GetYear(now) > AIDate.GetYear(date_built)) || 		   // make first manage the year after it was built
+	local days_since_built = now - date_built;
+	if( ((last_vehicle_manage == null && days_since_built > 75) || // first manage after a bit more than two months
 			(last_vehicle_manage != null && last_vehicle_manage + AIDate.GetDate(0, 3, 0) < now )) &&  // and then every 3 months
 			AIDate.GetMonth(now) > 2)  // but don't make any management on the first two months of the year
 	{
@@ -987,6 +1029,17 @@ function Connection::ManageVehicles()
 		Log.Info("Connection::ManageVehicles time to manage vehicles for connection " + this.node[0].GetName() + " - " + this.node[1].GetName(), Log.LVL_INFO);
 		Helper.SetSign(this.station[0] + 1, "manage");
 		Helper.SetSign(this.station[1] + 1, "manage");
+
+
+		// Sometimes look for new vehicles to upgrade to
+		if(AIBase.RandRange(5) < 1 || 
+				this.desired_engine == null ||
+				!AIEngine.IsBuildable(this.desired_engine)) // Always find new desired engine type if the previous one is no longer buildable
+		{
+			this.FindNewDesiredEngineType();
+			this.MassUpgradeVehicles();
+		}
+
 
 		AICompany.SetLoanAmount(AICompany.GetMaxLoanAmount());
 		// wait one year before first manage, and then every year
@@ -997,7 +1050,7 @@ function Connection::ManageVehicles()
 
 		local connection_vehicles = GetVehicles();
 		local veh = null;
-		for(veh = connection_vehicles.Begin(); connection_vehicles.HasNext(); veh = connection_vehicles.Next())
+		foreach(veh, _ in connection_vehicles)
 		{
 			// If the vehicle is to old => sell it. Otherwise if the vehicle is kept, include it in the income checking.
 			if(AIVehicle.GetAge(veh) > AIVehicle.GetMaxAge(veh) - 365 * 2)
@@ -1005,8 +1058,14 @@ function Connection::ManageVehicles()
 				AIVehicle.SetName(veh, "old -> sell");
 				SendVehicleForSelling(veh);
 			}
-			else
+			else 
 			{
+				// Check if the vehicle has been told to upgrade, but is not going to a depot
+				if(Connection.IsVehicleToldToUpgrade(veh) && !IsVehicleGoingToADepot(veh))
+				{
+					AIVehicle.SendVehicleToDepot(veh);
+				}
+
 				if(AIVehicle.GetAge(veh) > 90) // Only include vehicles older than 90 days in the income stats
 				{
 					income += AIVehicle.GetProfitThisYear(veh);
@@ -1039,17 +1098,26 @@ function Connection::ManageVehicles()
 		Log.Info("connection income: " + income, Log.LVL_INFO);
 		Log.Info("connection mean income: " + mean_income, Log.LVL_INFO);
 		Log.Info("connection long time mean income: " + long_time_mean_income, Log.LVL_INFO);
-		Log.Info("connection max usage: " + this.max_station_usage, Log.LVL_INFO);
+		Log.Info("connection max station usage: " + this.max_station_usage, Log.LVL_INFO);
+		Log.Info("connection max station tile usage: " + this.max_station_tile_usage, Log.LVL_INFO);
 
-		if(mean_income < 30 ||
-			(long_time_mean_income > 0 && income < (long_time_mean_income / 2)) ||
-					(long_time_mean_income <= 0 && income < (long_time_mean_income * 2) / 3))
+
+		local recently_repaired = this.last_repair_route != null && 
+			this.last_repair_route + 30 * 3 > AIDate.GetCurrentDate(); // repaired in the last 3 months
+		if(!recently_repaired &&
+			(
+				mean_income < 30 ||
+				(long_time_mean_income > 0 && income < (long_time_mean_income / 2)) ||
+						(long_time_mean_income <= 0 && income < (long_time_mean_income * 2) / 3))
+			)
 		{
 			// Repair the connection if it is broken
-			RepairRoadConnection();
+			if(RepairRoadConnection())
+				this.long_time_mean_income = this.long_time_mean_income * 7 / 10; // Fake a reduction of long time mean in order to prevent or make management hell less likely to happen.
+			this.last_repair_route = AIDate.GetCurrentDate();
 		}
 
-		long_time_mean_income = (long_time_mean_income * 9 + income) / 10;
+		this.long_time_mean_income = (this.long_time_mean_income * 9 + income) / 10;
 
 		// Unless the vehicle list is empty, only buy/sell if we have not bought/sold anything the last 30 days.
 		local recently_sold = last_bus_sell != null && last_bus_sell + 30 > now;
@@ -1057,7 +1125,8 @@ function Connection::ManageVehicles()
 		if( veh_list.Count() == 0 ||
 				(!recently_sold && !recently_bought) )
 		{
-			if( (income < 0 || this.max_station_usage > 200 || max_waiting < 10) && veh_list.Count() > 1)
+			// Sell check
+			if( (income < 0 || this.max_station_usage > 200 || this.max_station_tile_usage > 230 || max_waiting < 10) && veh_list.Count() > 1)
 			{
 				local num_to_sell = Helper.Max(1, veh_list.Count() / 8);
 				
@@ -1067,12 +1136,13 @@ function Connection::ManageVehicles()
 					local running_cost = AIEngine.GetRunningCost(engine_type_id);
 					num_to_sell = Helper.Min(veh_list.Count() - 1, (-income) / running_cost + 1);
 				}
-				else if(this.max_station_usage > 200)
+				else if(this.max_station_usage > 200 || this.max_station_tile_usage > 230)
 				{
 					num_to_sell = Helper.Max(1, veh_list.Count() / 6);
 				}
 
 
+				Log.Info("Manage vehicles decided to Sell " + num_to_sell + " buses/trucks", Log.LVL_INFO);
 				for(local i = 0; i < num_to_sell; i++)
 				{	
 					local veh_to_sell = null;
@@ -1090,7 +1160,6 @@ function Connection::ManageVehicles()
 						return;
 					}
 
-					Log.Info("Manage vehicles decided to Sell one bus", Log.LVL_INFO);
 					SendVehicleForSelling(veh_to_sell);
 
 					// Remove the sold vehicle from the list of vehicles in the connection
@@ -1101,7 +1170,8 @@ function Connection::ManageVehicles()
 			else 
 			{
 				if(veh_list.Count() == 0 || 
-					(this.max_station_usage < 170 && max_waiting > 40 + veh_list.Count() * 3) )
+					(this.max_station_usage < 170 && this.max_station_tile_usage < 200 &&
+					 max_waiting > 40 + veh_list.Count() * 3) )
 				{
 					// Buy a new vehicle
 					Log.Info("Manage vehicles: decided to Buy a new bus", Log.LVL_INFO);
@@ -1137,6 +1207,9 @@ function Connection::ManageVehicles()
 
 function Connection::SendVehicleForSelling(vehicle_id)
 {
+	if(!AIVehicle.IsValidVehicle(vehicle_id))
+		return;
+
 	Log.Info("Send vehicle " + AIVehicle.GetName(vehicle_id) + " for selling", Log.LVL_INFO);
 
 	ClueHelper.StoreInVehicleName(vehicle_id, "sell");
@@ -1148,29 +1221,37 @@ function Connection::SendVehicleForSelling(vehicle_id)
 		AIOrder.RemoveOrder(vehicle_id, 0);
 	}
 
-	// Send vehicle to specific depot so it don't get lost
-	if(!AIOrder.AppendOrder(vehicle_id, depot[0], AIOrder.AIOF_STOP_IN_DEPOT))
+	// Check if it is already in a depot
+	if(AIVehicle.IsStoppedInDepot(vehicle_id))
+		return;
+
+	if(AIRoad.IsRoadDepotTile(depot[0])) 
 	{
-		Log.Error(AIError.GetLastErrorString(), Log.LVL_INFO);
-		KABOOOOOM_Failed_to_append_order // crash if sending vehicle to depot fails
+		// Send vehicle to specific depot so it don't get lost
+		if(AIOrder.AppendOrder(vehicle_id, depot[0], AIOrder.AIOF_STOP_IN_DEPOT))
+		{
+			// Add an extra order so we can skip between the orders to fully make sure vehicles leave
+			// stations they previously were full loading at.
+			AIOrder.AppendOrder(vehicle_id, depot[0], AIOrder.AIOF_STOP_IN_DEPOT);
+
+			// so that vehicles that load stuff departures
+			AIOrder.SkipToOrder(vehicle_id, 1); 
+			AIOrder.SkipToOrder(vehicle_id, 0); 
+
+			// Remove the second now unneccesary order
+			AIOrder.RemoveOrder(vehicle_id, 1);
+		}
 	}
-
-	// Add an extra order so we can skip between the orders to fully make sure vehicles leave
-	// stations they previously were full loading at.
-	AIOrder.AppendOrder(vehicle_id, depot[0], AIOrder.AIOF_STOP_IN_DEPOT);
-
-	// so that vehicles that load stuff departures
-	AIOrder.SkipToOrder(vehicle_id, 1); 
-	AIOrder.SkipToOrder(vehicle_id, 0); 
-
-	// Remove the second now unneccesary order
-	AIOrder.RemoveOrder(vehicle_id, 1);
+	else
+	{
+		// depot[0] has been destroyed
+		AIVehicle.SendVehicleToDepot(vehicle_id);
+	}
 
 	// Turn around road vehicles that stand still, possible in queues.
 	if(AIVehicle.GetVehicleType(vehicle_id) == AIVehicle.VT_ROAD)
 	{
-		// max 20% of maximum speed
-		if(AIVehicle.GetCurrentSpeed(vehicle_id) < AIEngine.GetMaxSpeed(AIVehicle.GetEngineType(vehicle_id)) * 5 / 4)
+		if(AIVehicle.GetCurrentSpeed(vehicle_id) == 0)
 		{
 			Log.Info("Turn aronud vehicle that was sent for selling since speed is zero and it might be stuck in a queue.", Log.LVL_DEBUG);
 			Helper.SetSign(AIVehicle.GetLocation(vehicle_id), "turn");
@@ -1191,6 +1272,20 @@ function Connection::GetVehicles()
 	local intersect = veh0;
 
 	return intersect;
+}
+
+function Connection::GetBrokenVehicles()
+{
+	local veh0 = AIVehicleList_Station(AIStation.GetStationID(station[0]));
+	local veh1 = AIVehicleList_Station(AIStation.GetStationID(station[1]));
+
+	veh0.AddList(veh1);
+	local union = veh0;
+
+	union.Valuate(HasVehicleInvalidOrders);
+	union.KeepValue(1);
+
+	return union;
 }
 
 function Connection::FullLoadAtStations(enable_full_load)
@@ -1273,7 +1368,7 @@ function Connection::FullLoadAtStations(enable_full_load)
 						local order_dest_station_id = AIStation.GetStationID(order_dest_tile);
 						local vehicle_list = Station.GetListOfVehiclesAtStation(order_dest_station_id);
 
-						foreach(at_station_veh in vehicle_list)
+						foreach(at_station_veh, _ in vehicle_list)
 						{
 							// Force vehicles at station to skip to next order
 							AIOrder.SkipToOrder(at_station_veh, i + 1);
@@ -1305,7 +1400,12 @@ function Connection::StopInDepots(stop_in_depots)
 			if(stop_in_depots)
 				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | AIOrder.AIOF_STOP_IN_DEPOT);
 			else
-				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | AIOrder.AIOF_SERVICE_IF_NEEDED);
+			{
+				// Always go to depot if breakdowns are "normal", otherwise only go if needed
+				local service_flag = AIGameSettings.GetValue("vehicle_breakdowns") == 2? 0 : AIOrder.AIOF_SERVICE_IF_NEEDED;
+
+				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | service_flag);
+			}
 		}
 	}
 
@@ -1370,17 +1470,18 @@ function Connection::RepairRoadConnection()
 	local front2 = AIRoad.GetRoadStationFrontTile(station[1]);
 
 	AICompany.SetLoanAmount(AICompany.GetMaxLoanAmount());
+	local road_builder = RoadBuilder();
 	local repair = true;
-	local connect_result = clueless_instance.ConnectByRoad(front1, front2, repair, 50000) == RoadBuilder.CONNECT_SUCCEEDED;
-	connect_result = connect_result && clueless_instance.ConnectByRoad(front2, front1, repair, 50000) == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
+	local connect_result = road_builder.ConnectTiles(front1, front2, repair, 50000) == RoadBuilder.CONNECT_SUCCEEDED;
+	connect_result = connect_result && road_builder.ConnectTiles(front2, front1, repair, 50000) == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
 
 	if(!connect_result)
 	{
 		// retry but without higher penalty for constructing new road
 		Log.Warning("Failed to repair route -> try again but without high penalty for building new road", Log.LVL_INFO);
 		repair = false;
-		connect_result = clueless_instance.ConnectByRoad(front1, front2, repair, 100000) == RoadBuilder.CONNECT_SUCCEEDED;
-		connect_result = connect_result && clueless_instance.ConnectByRoad(front2, front1, repair, 100000) == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
+		connect_result = road_builder.ConnectTiles(front1, front2, repair, 100000) == RoadBuilder.CONNECT_SUCCEEDED;
+		connect_result = connect_result && road_builder.ConnectTiles(front2, front1, repair, 100000) == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
 	}
 
 	if(!connect_result)
@@ -1393,6 +1494,125 @@ function Connection::RepairRoadConnection()
 	return connect_result;
 }
 
+function Connection::FindNewDesiredEngineType()
+{
+	local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, AIVehicle.VT_ROAD);
+
+	// Change desired engine only if the best one is X % better than the old one or the old one
+	// is no longer buildable.
+	if(this.desired_engine == null || !AIEngine.IsBuildable(this.desired_engine) ||
+			Strategy.EngineBuyScore(best_engine) > Strategy.EngineBuyScore(this.desired_engine) * 1.15)
+	{
+		this.desired_engine = best_engine;
+	}
+}
+
+function Connection::MassUpgradeVehicles()
+{
+	// Require to be in state ACTIVE or SUSPENDED in order to mass-upgrade
+	// vehicles
+	if(this.state != Connection.STATE_ACTIVE && this.state != Connection.STATE_SUSPENDED)
+		return;
+
+	Log.Info("Check if connection " + node[0].GetName() + " - " + node[1].GetName() + " has any vehicles to mass-upgrade", Log.LVL_SUB_DECISIONS);
+
+	// Make a list of vehicles of this connection that are not
+	// of the desired vehicle type
+	local vehicle_list = this.GetVehicles();
+	local all_veh_count = vehicle_list.Count();
+	vehicle_list.Valuate(AIVehicle.GetEngineType);
+	vehicle_list.RemoveValue(this.desired_engine);
+	local wrong_type_count = vehicle_list.Count();
+
+	// No need to do anything if there are no vehicles of wrong type
+	if(wrong_type_count == 0)
+		return;
+
+	// Make sure we can afford the upgrade
+	local veh_margin = 2;
+	if(AICompany.GetBankBalance(AICompany.COMPANY_SELF) < AIEngine.GetPrice(this.desired_engine) * (wrong_type_count + veh_margin))
+	{
+		// Does not have enough money to upgrade all (+ 2 extra vehicles)
+		local bank_balance = AICompany.GetBankBalance(AICompany.COMPANY_SELF);
+		vehicle_list.Valuate(AIVehicle.GetCurrentValue);
+		local tot_value = Helper.ListValueSum(vehicle_list);
+		local tot_cost = AIEngine.GetPrice(this.desired_engine) * (wrong_type_count + veh_margin);
+
+		while(wrong_type_count > 0 && bank_balance < (tot_cost - tot_value))
+		{
+			// Reduce the upgrade list with the lowest valuable old vehicle ( => higher probability that the upgrade can be performed on many vehicles)
+			vehicle_list.Sort(AIAbstractList.SORT_BY_VALUE, true); // lowest value first
+			tot_value -= vehicle_list.GetValue(vehicle_list.Begin());
+			tot_cost -= AIEngine.GetPrice(this.desired_engine);
+			vehicle_list.RemoveTop(1);
+			wrong_type_count--;
+		}
+
+		if(wrong_type_count <= 0)
+			return;
+	}
+
+
+	// When upgrading vehicles, the old vehicle will be sold and a new one with zero income statistics will be created.
+	// If no action is taken, this will lead to the AI thinking that the connection might be broken as the mean income will dip.
+	// That could lead to spending huge amount of time on trying to repair all connections that has just been upgraded causing
+	// ongoing upgrades to take even more time => large real income dips.
+
+	// Keep long time income proportional to amount of vehicles that will not be upgraded.
+	this.long_time_mean_income = (all_veh_count - wrong_type_count) * this.long_time_mean_income / all_veh_count;
+	// Reduce the income even a bit more to also account for the period of time when there will be less vehicles available to produce income.
+	this.long_time_mean_income = this.long_time_mean_income * 70 / 100;
+
+	Log.Info("Mass-upgrade vehicles on connection: " + node[0].GetName() + " - " + node[1].GetName(), Log.LVL_SUB_DECISIONS);
+	foreach(vehicle_id, _ in vehicle_list)
+	{
+		local state = AIVehicle.GetState(vehicle_id);
+		if(state != AIVehicle.VS_IN_DEPOT)
+		{
+			// If in active mode, store "upgrade" in the vehicle name. (in suspended mode we don't want to overwrite "suspended" in vehicle names.
+			// however, they will eventually reach the depot and before un-suspending a connection there is a good moment to mass-upgrade.
+			if(this.state != Connection.STATE_SUSPENDED)
+				ClueHelper.StoreInVehicleName(vehicle_id, "upgrade " + this.desired_engine);
+
+			if(!IsVehicleGoingToADepot(vehicle_id)) // make sure to not cancel to-depot orders
+			{
+				AIVehicle.SendVehicleToDepot(vehicle_id);
+			}
+		}
+		else
+		{
+			// Vehicle is in depot
+			AIVehicle.SellVehicle(vehicle_id);
+			this.BuyVehicles(1, this.desired_engine);
+		}
+	}
+}
+
+/* static */ function Connection::IsVehicleToldToUpgrade(vehicle_id)
+{
+	local str = ClueHelper.ReadStrFromVehicleName(vehicle_id);
+	local u_len = "upgrade".len();
+	if(str.len() < u_len) return false; // Reduces the number of catched errors as those cause big red messages in the log
+	try
+	{
+		return str.slice(0, u_len) == "upgrade";
+	}
+	catch(e)
+	{
+		// Slice can raise an error if str is too short
+		return false;
+	}
+}
+
+/* static */ function Connection::GetVehicleUpgradeToEngine(vehicle_id)
+{
+	local str = ClueHelper.ReadStrFromVehicleName(vehicle_id);
+	if(str.slice(0, "upgrade".len()) != "upgrade")
+		return -1;
+
+	return str.slice("upgrade ".len()).tointeger();
+}
+
 //////////////////////////////////////////////////////////////////////
 
 function GetVehiclesWithoutOrders()
@@ -1401,6 +1621,53 @@ function GetVehiclesWithoutOrders()
 	empty_orders.Valuate(AIOrder.GetOrderCount);
 	empty_orders.KeepValue(0);
 	return empty_orders;
+}
+
+function HasVehicleInvalidOrders(vehicleId)
+{
+	for(local i = 0; i < AIOrder.GetOrderCount(vehicleId); ++i)
+	{
+		if( (AIOrder.rawin("IsVoidOrder") && AIOrder.IsVoidOrder(vehicleId, i)) /* ||
+				AIOrder.GetOrderFlags(vehicleId, i) == 0*/) // <-- for backward compatibility <-- The backward compatibility code caused problems with new OpenTTD versions.
+			return true;
+	}
+
+	return false;
+}
+
+function IsVehicleGoingToADepot(vehicleId)
+{
+	return AIRoad.IsRoadDepotTile(Order.GetCurrentOrderDestination(vehicleId));
+}
+
+function GetVehiclesWithInvalidOrders()
+{
+	local invalid_orders = AIVehicleList();
+	invalid_orders.Valuate(HasVehicleInvalidOrders);
+	invalid_orders.KeepValue(1);
+	return invalid_orders;
+}
+
+function GetVehiclesWithUpgradeStatus()
+{
+	local list = AIVehicleList();
+	list.Valuate(Connection.IsVehicleToldToUpgrade);
+	list.KeepValue(1);
+	return list;
+}
+
+function GetCargoFromStation(station_id)
+{
+	local save_str = ClueHelper.ReadStrFromStationName(station_id);
+	local space = save_str.find(" ");
+	local save_version = -1;
+	local node_save_str = null;
+	if(space == null)
+		return -1;
+	save_version = save_str.slice(0, space);
+	node_save_str = save_str.slice(space + 1);
+	local node = Node.CreateFromSaveString(node_save_str);
+	return node == null? -1 : node.cargo_id;
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -1413,7 +1680,6 @@ class CluelessPlus extends AIController {
 
 	loaded_from_save = false;
 
-	town_finder = null;
 	pair_finder = null;
 	road_builder = null;
 	connection_list = [];
@@ -1423,6 +1689,7 @@ class CluelessPlus extends AIController {
 	state_build = false;
 	state_ai_name = null;
 	state_desperateness = 0;
+	state_connect_performance = 0;
 
 	conf_ai_name = null
 	conf_min_balance = 0;
@@ -1433,7 +1700,6 @@ class CluelessPlus extends AIController {
 	constructor() {
 		stop = false;
 		loaded_from_save = false;
-		town_finder = TownFinder();
 		pair_finder = PairFinder();
 		road_builder = RoadBuilder();
 		connection_list = [];
@@ -1443,6 +1709,7 @@ class CluelessPlus extends AIController {
 		state_build = false;
 		state_ai_name = null;
 		state_desperateness = 0;
+		state_connect_performance = 0;
 
 		conf_ai_name = ["Clueless", "Cluemore", "Not so Clueless", "Average IQ", 
 				"Almost smart", "Smart", "Even more smart", "Almost intelligent", 
@@ -1458,6 +1725,8 @@ class CluelessPlus extends AIController {
 	function Start();
 	function Stop();
 	function HandleEvents();
+	function SendLostVehicleForSelling(vehicle_id);
+	function CheckDepotsForStopedVehicles();
 	function ConnectPair();
 
 	function Save();
@@ -1471,21 +1740,21 @@ class CluelessPlus extends AIController {
 	function GetMaxMoney();
 
 	function BuildServiceInTown();
-	function BuildStopInTown(town);
+	function BuildStopInTown(town, road_veh_type, accept_cargo = -1, produce_cargo = -1);
 	function BuildStopForIndustry(industry_id, cargo_id);
-	function BuyConnectionVehicles(connection); 
+	function BuyNewConnectionVehicles(connection); 
 	// if tile is not a road-tile it will search for closest road-tile and then start searching for a location to place it from there.
 	function BuildBusStopNextToRoad(tile, min_loops, max_loops); 
 	function BuildTruckStopNextToRoad(tile, min_loops, max_loops); 
 	function BuildDepotNextToRoad(tile, min_loops, max_loops); 
 	function BuildNextToRoad(tile, what, min_loops, max_loops);  // 'what' can be any of: "BUS_STOP", "TRUCK_STOP", "DEPOT". ('what' should be a string)
 	function GrowStation(station_id, station_type);
+	function GrowStationParallel(station_id, station_type);
 
 	function PlaceHQ(nearby_tile);
 
 	function FindClosestRoadTile(tile, max_loops);
 
-	function ConnectByRoad(tile1, tile2, repair = false, max_loops = -1);
 	function FindRoadExtensionTile(road_tile, target_tile, min_loops, max_loops); // road_tile = start search here
 	                                                                              // target_tile = when searching for a place to extend existing road, we want to get as close as possible to target_tile
 																				  // min_loops = search at least for this amount of loops even if one possible extension place is found (return best found)
@@ -1499,7 +1768,7 @@ function CluelessPlus::Start()
 
 	AIRoad.SetCurrentRoadType(AIRoad.ROADTYPE_ROAD);
 
-	Log.Info("", Log.LVL_INFO);
+	AILog.Info(""); // Call AILog directly in order to not include date in this message
 
 	if(AIController.GetSetting("slow_ai") == 1)
 	{
@@ -1563,8 +1832,12 @@ function CluelessPlus::Start()
 			// Also only manage our vehicles if we have any.
 			local bus_list = AIVehicleList();
 
-			// ... check if we can afford to build some stuff
-			if(this.GetMaxMoney() > 95000 && !AIGameSettings.IsDisabledVehicleType(AIVehicle.VT_ROAD))
+			// ... check if we can afford to build some stuff (or we don't have anything -> need to build to either suceed or go bankrupt and restart)
+			//   AND road vehicles are not disabled
+			//   AND at least 5 more buses/trucks can be built before reaching the limit (a 1 bus/truck connection will not become good)
+			if((this.GetMaxMoney() > 95000 || AIStationList(AIStation.STATION_ANY).IsEmpty() ) &&
+					!AIGameSettings.IsDisabledVehicleType(AIVehicle.VT_ROAD) &&
+					AIGameSettings.GetValue("max_roadveh") > bus_list.Count() + 5)
 			{
 				state_build = true;
 				not_build_info_printed = false;
@@ -1580,40 +1853,7 @@ function CluelessPlus::Start()
 
 			if(!bus_list.IsEmpty() && !AIGameSettings.IsDisabledVehicleType(AIVehicle.VT_ROAD))
 			{
-				Log.Info("Look for buses to sell / send to depot for selling", Log.LVL_SUB_DECISIONS);
-
-				// check if there are any vehicles to sell
-				local to_sell_in_depot = AIVehicleList();
-				to_sell_in_depot.Valuate(AIVehicle.IsStoppedInDepot);
-				to_sell_in_depot.KeepValue(1);
-				Log.Info("num vehicles stopped in depot: " + to_sell_in_depot.Count(), Log.LVL_SUB_DECISIONS);
-				for(local i = to_sell_in_depot.Begin(); to_sell_in_depot.HasNext(); i = to_sell_in_depot.Next())
-				{
-					local veh_state = ClueHelper.ReadStrFromVehicleName(i);
-
-					// Don't sell suspended / active vehicles
-					if(veh_state == "suspended" || veh_state == "active")
-						continue;
-
-
-					Log.Info("Sell vehicle " + i + ": " + AIVehicle.GetName(i) + " (state: " + veh_state + ")", Log.LVL_SUB_DECISIONS);
-					if(!AIVehicle.SellVehicle(i)) // sell
-						Log.Info("Failed to sell vehicle " + AIVehicle.GetName(i) + " in depot - Error string: " + AIError.GetLastErrorString(), Log.LVL_INFO);
-				}
-
-				// check if there are any vehicles without orders that don't tries to find a depot
-				// the new selling code adds a depot order, but there may exist vehicles without orders roaming around for other reasons
-				local to_send_to_depot = GetVehiclesWithoutOrders();
-				Log.Info("num vehicles without orders: " + to_send_to_depot.Count(), Log.LVL_DEBUG);
-				to_send_to_depot.Valuate(AIOrder.IsGotoDepotOrder, AIOrder.ORDER_CURRENT);
-				to_send_to_depot.KeepValue(0);
-				Log.Info("num vehicles does not go to depot: " + to_send_to_depot.Count(), Log.LVL_DEBUG);
-				for(local i = to_send_to_depot.Begin(); to_send_to_depot.HasNext(); i = to_send_to_depot.Next())
-				{
-					Log.Info("Send vehicle " + AIVehicle.GetName(i) + " to depot", Log.LVL_SUB_DECISIONS);
-					//AIVehicle.SendVehicleToDepot(i); // send to depot
-				}
-
+				this.CheckDepotsForStopedVehicles();
 
 				// check if we should manage the connections
 				local now = AIDate.GetCurrentDate();
@@ -1654,6 +1894,8 @@ function CluelessPlus::Start()
 							connection.ManageState();
 							connection.ManageStations();
 							connection.ManageVehicles();
+
+							this.CheckDepotsForStopedVehicles(); // Sell / upgrade vehicles even while managing connections - good when there are a huge amount of connections
 						}
 					}
 
@@ -1698,16 +1940,6 @@ function CluelessPlus::Start()
 
 		if(state_build)
 		{
-			foreach(conn in connection_list)
-			{
-				if(conn.station_statistics.len() == 0)
-					continue;
-				
-				// look for connections that could have mail service added
-				// TODO
-
-			}
-
 			// Simulate the time it takes to look for a connection
 			if(AIController.GetSetting("slow_ai"))
 				AIController.Sleep(1000); // a bit more than a month
@@ -1789,10 +2021,13 @@ function CluelessPlus::HandleEvents()
 
 		if(ev_type == AIEvent.AI_ET_VEHICLE_LOST)
 		{
-			Log.Info("Vehicle lost event detected", Log.LVL_INFO);
 			local lost_event = AIEventVehicleLost.Convert(ev);
 			local lost_veh = lost_event.GetVehicleID();
 
+			Log.Info("Vehicle lost event detected - lost vehicle: " + AIVehicle.GetName(lost_veh), Log.LVL_INFO);
+
+			// This is not a pointer to the regular connection object. Instead a new object
+			// is created with enough data to use RepairRoadConnection.
 			local connection = ReadConnectionFromVehicle(lost_veh);
 			
 			if(connection != null && connection.station.len() >= 2 && connection.state == Connection.STATE_ACTIVE)
@@ -1800,15 +2035,23 @@ function CluelessPlus::HandleEvents()
 				Log.Info("Try to connect the stations again", Log.LVL_SUB_DECISIONS);
 
 				if(!connection.RepairRoadConnection())
-					SellVehicle(lost_veh);
+					this.SendLostVehicleForSelling(lost_veh);
+
+				// TODO:
+				// If a vehicle is stuck somewhere but the connection succeeds to repair every time without letting the vehicles out,
+				// they will never be sent for selling nor will any depot be constructed nearby in order to sell the vehicles and
+				// reduce the cost + vehicle usage. (except for if the connection decide to sell the vehicles in the vehicle management
+				// procedure)
+				//
+				// If many vehicles are lost, they can possible also cause a management hell.
 			}
 			else
 			{
-				SellVehicle(lost_veh);
+				this.SendLostVehicleForSelling(lost_veh);
 			}
 			
 		}
-		if(ev_type == AIEvent.AI_ET_VEHICLE_CRASHED)
+		else if(ev_type == AIEvent.AI_ET_VEHICLE_CRASHED)
 		{
 			local crash_event = AIEventVehicleCrashed.Convert(ev);
 			local crash_reason = crash_event.GetCrashReason();
@@ -1839,13 +2082,236 @@ function CluelessPlus::HandleEvents()
 				}
 			}
 		}
+		else if(ev_type == AIEvent.AI_ET_INDUSTRY_CLOSE)
+		{
+			local close_event = AIEventIndustryClose.Convert(ev);
+			local close_industry = close_event.GetIndustryID();
+
+			local close_tile = AIIndustry.GetLocation(close_industry);
+			local close_tile_is_valid = AIMap.IsValidTile(close_tile);
+
+			foreach(connection in connection_list)
+			{
+				// Close connections that use this industry
+				local match = false;
+				foreach(node in connection.node)
+				{
+					// Ignore town nodes
+					if(node.IsTown())
+						continue;
+
+					if(close_tile_is_valid)
+					{
+						if(node.industry_id == close_industry && node.node_location != close_industry)
+						{
+							// The node has the close_industry id, but not the right location => we know the close_industry id has been 
+							// reused by another industry located elsewhere => we know the node is dead.
+							match = true;
+						}
+						else
+						{
+							// The close industry location is valid, but it could either be that the industry at this node is still existing
+							// or that it has been closed and reused for a new industry elsewhere.
+							// -> we don't know if close_tile is for the new or old industry
+
+							if(node.industry_id == close_industry)
+							{
+								if(AIDate.GetCurrentDate() - connection.date_built > 365)
+								{
+									// The connection is older than 365 days, so assume this can not be a new connection that was built after
+									// the event was triggered, the industry closed and a new one opened used the same id.
+									match = true;
+								}
+								else
+								{
+									// The connection is either a new connection that has reused the industry id or the industry will soon be closed
+
+									// -> do nothing, rely on the detection of broken nodes
+								}
+							}
+						}
+					}
+					else
+					{
+						// The close_industry is not a valid industry => if there is a match for this industry id, the node is dead
+						if(node.industry_id == close_industry)
+							match = true;
+					}
+				}
+				if(match)
+				{
+					connection.CloseConnection();
+				}
+			}
+		} // event industry close
+	}
+}
+
+function CluelessPlus::SendLostVehicleForSelling(vehicle_id)
+{
+	if(!AIOrder.IsGotoDepotOrder(vehicle_id, AIOrder.ORDER_CURRENT))
+	{
+		// Unshare & clear orders
+		AIOrder.UnshareOrders(vehicle_id);
+		while(AIOrder.GetOrderCount(vehicle_id) > 0)
+		{
+			AIOrder.RemoveOrder(vehicle_id, 0);
+		}
+
+		ClueHelper.StoreInVehicleName(vehicle_id, "sell");
+
+		if(!AIVehicle.IsStoppedInDepot(vehicle_id))
+			AIVehicle.SendVehicleToDepot(vehicle_id);
+	}
+}
+
+function CluelessPlus::CheckDepotsForStopedVehicles()
+{
+	local bus_list = AIVehicleList();
+	if(!bus_list.IsEmpty() && !AIGameSettings.IsDisabledVehicleType(AIVehicle.VT_ROAD))
+	{
+		Log.Info("Look for buses to sell / send to depot for selling", Log.LVL_SUB_DECISIONS);
+
+		// check if there are any vehicles to sell
+		local to_sell_in_depot = AIVehicleList();
+		to_sell_in_depot.Valuate(AIVehicle.IsStoppedInDepot);
+		to_sell_in_depot.KeepValue(1);
+		Log.Info("num vehicles stopped in depot: " + to_sell_in_depot.Count(), Log.LVL_SUB_DECISIONS);
+		foreach(i, _ in to_sell_in_depot)
+		{
+			local veh_state = ClueHelper.ReadStrFromVehicleName(i);
+
+			// Don't sell suspended / active vehicles
+			if(veh_state == "suspended" || veh_state == "active")
+				continue;
+			
+			// Don't sell vehicles that has been told to upgrade
+			if(Connection.IsVehicleToldToUpgrade(i))
+			{
+				Log.Info("Vehicle " + i + " " + ": " + AIVehicle.GetName(i) + " has been told to upgrade", Log.LVL_DEBUG);
+				local depot = AIVehicle.GetLocation(i);
+				local engine = Connection.GetVehicleUpgradeToEngine(i);
+				if(!AIEngine.IsBuildable(engine))
+				{
+					Log.Warning("Vehicle got upgrade order to a engine type (" + engine + ") that is not buildable", Log.LVL_INFO);
+				}
+				else
+				{
+					// The engine is buildable 
+					local stn_list = AIStationList_Vehicle(i);
+					if(stn_list.IsEmpty())
+						continue;
+					local cargo = GetCargoFromStation(stn_list.Begin());
+					if(cargo == -1)
+						continue;
+					Log.Info("Upgrade vehicle " + i + ": " + AIVehicle.GetName(i) + " (state: " + veh_state + ")", Log.LVL_SUB_DECISIONS);
+
+					if( AIVehicleList().Count() < AIGameSettings.GetValue("max_roadveh") )
+					{
+						// There is enough vehicle slots to build new vehicle first, and then sell.
+						local veh = AIVehicle.BuildVehicle(depot, engine);
+						if(AIVehicle.IsValidVehicle(veh))
+						{
+							if(AIVehicle.RefitVehicle(veh, cargo))
+							{
+								// Upgrade succeeded
+								AIOrder.ShareOrders(veh, i);
+								ClueHelper.StoreInVehicleName(veh, "active");
+								AIVehicle.StartStopVehicle(veh);
+								AIVehicle.SellVehicle(i);
+								continue;
+							}
+
+							// Refit failed -> sell new vehicle
+							Log.Warning("Refit of vehicle " + AIVehicle.GetName(veh) + " to cargo " + AICargo.GetCargoLabel(cargo) + " failed", Log.LVL_INFO);
+							AIVehicle.SellVehicle(veh);
+						}
+					}
+					else
+					{
+						// Already using max num vehicles -> must sell first. A bit more risky but with max num vehicles it should probably not bankrupt the company on a failure.
+
+						// In order to make order sharing work, we need to find a vehicle that vehicle i shares orders with.
+						local shared_orders_group = AIVehicleList_SharedOrders(i);
+						shared_orders_group.Valuate(Helper.ItemValuator);
+						shared_orders_group.RemoveValue(i);
+
+						if(!shared_orders_group.IsEmpty())
+						{
+							// In order to upgrade when vehicle count = max, the vehicle to upgrade must share orders with at least one vehicle. (as order copying via memory has not been implemented and we don't have a reference to the connection here)
+							Log.Warning("Upgrading vehicle while at max vehicle count => this is slightly more risky than when vehicle count is < max.", Log.LVL_INFO);
+
+							AIVehicle.SellVehicle(i);
+							local veh = AIVehicle.BuildVehicle(depot, engine);
+							if(AIVehicle.IsValidVehicle(veh))
+							{
+								if(AIVehicle.RefitVehicle(veh, cargo))
+								{
+									// Upgrade succeeded
+									AIOrder.ShareOrders(veh, shared_orders_group.Begin());
+									ClueHelper.StoreInVehicleName(veh, "active");
+									AIVehicle.StartStopVehicle(veh);
+									continue;
+								}
+
+								// Refit failed -> sell new vehicle
+								Log.Warning("Refit of vehicle " + AIVehicle.GetName(veh) + " to cargo " + AICargo.GetCargoLabel(cargo) + " failed", Log.LVL_INFO);
+								AIVehicle.SellVehicle(veh);
+							}
+
+							continue; // Already sold vehicle i, so there is no return to previous state.
+						}
+					}
+
+				}
+
+
+				Log.Warning("Buying of new vehicle failed -> return vehicle to active state", Log.LVL_INFO);
+				Log.Info("depot: " + Tile.GetTileString(depot), Log.LVL_INFO);
+				Log.Info("engine: " + engine + " = " + AIEngine.GetName(engine), Log.LVL_INFO);
+				ClueHelper.StoreInVehicleName(i, "active");
+				AIVehicle.StartStopVehicle(i);
+
+				continue;
+			}
+
+
+			Log.Info("Sell vehicle " + i + ": " + AIVehicle.GetName(i) + " (state: " + veh_state + ")", Log.LVL_SUB_DECISIONS);
+			if(!AIVehicle.SellVehicle(i)) // sell
+				Log.Info("Failed to sell vehicle " + AIVehicle.GetName(i) + " in depot - Error string: " + AIError.GetLastErrorString(), Log.LVL_INFO);
+		}
+
+		// check if there are any vehicles without orders that don't tries to find a depot
+		// the new selling code adds a depot order, but there may exist vehicles without orders roaming around for other reasons
+		local to_send_to_depot = GetVehiclesWithoutOrders();
+		local invalid_orders_vehicles = GetVehiclesWithInvalidOrders();
+		local upgrade_status_vehicles = GetVehiclesWithUpgradeStatus();
+		Log.Info("num vehicles without orders: " + to_send_to_depot.Count(), Log.LVL_DEBUG);
+		to_send_to_depot.AddList(invalid_orders_vehicles);
+		to_send_to_depot.AddList(upgrade_status_vehicles);
+		Log.Info("num vehicles with invalid orders: " + invalid_orders_vehicles.Count(), Log.LVL_DEBUG);
+		Log.Info("num vehicles with upgrade status: " + upgrade_status_vehicles.Count(), Log.LVL_DEBUG);
+
+		to_send_to_depot.Valuate(AIOrder.IsGotoDepotOrder, AIOrder.ORDER_CURRENT);
+		to_send_to_depot.KeepValue(0);
+		to_send_to_depot.Valuate(AIVehicle.IsStoppedInDepot);
+		to_send_to_depot.KeepValue(0);
+
+		Log.Info("  num vehicles that does not go to depot: " + to_send_to_depot.Count(), Log.LVL_DEBUG);
+		foreach(i, _ in to_send_to_depot)
+		{
+			Log.Info("Send broken vehicle '" + AIVehicle.GetName(i) + "' to depot", Log.LVL_SUB_DECISIONS);
+			AIVehicle.SendVehicleToDepot(i); // send to depot
+		}
 	}
 }
 
 function CluelessPlus::ConnectPair()
 {
 	// scan for two pairs to connect
-	local pair = this.pair_finder.FindTwoNodesToConnect(100 + 20 * state_desperateness, state_desperateness, connection_list);
+	local a = Helper.Clamp(state_connect_performance, -20, 100); // bonus distance based on performance history
+	local max_distance = 100 + a + 20 * state_desperateness;
+	local pair = this.pair_finder.FindTwoNodesToConnect(max_distance, state_desperateness, connection_list);
 
 	if(!pair)
 	{
@@ -1888,10 +2354,19 @@ function CluelessPlus::ConnectPair()
 		if (node.IsTown())
 		{
 			local road_veh_type = AIRoad.GetRoadVehicleTypeForCargo(node.cargo_id);
-			station_tile = BuildStopInTown(node.town_id, road_veh_type);
+
+			// Make sure the station accept/produce the wanted cargo
+			local accept_cargo = -1;
+			local produce_cargo = -1;
+			if(node.IsCargoAccepted())
+				accept_cargo = node.cargo_id;
+			if(node.IsCargoProduced())
+				produce_cargo = node.cargo_id;
+
+			station_tile = BuildStopInTown(node.town_id, road_veh_type, accept_cargo, produce_cargo);
 
 			if (station_tile != null)
-				depot_tile = BuildDepotNextToRoad(station_tile, 0, 100);
+				depot_tile = BuildDepotNextToRoad(AIRoad.GetRoadStationFrontTile(station_tile), 0, 100);
 			else
 				Log.Warning("failed to build bus/truck stop in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
 		}
@@ -1902,7 +2377,7 @@ function CluelessPlus::ConnectPair()
 				station_tile = null;
 			
 			if (station_tile != null)
-				depot_tile = BuildDepotNextToRoad(station_tile, 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
+				depot_tile = BuildDepotNextToRoad(AIRoad.GetRoadStationFrontTile(station_tile), 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
 		}
 
 		// Append null if the station tile is invalid
@@ -1920,10 +2395,10 @@ function CluelessPlus::ConnectPair()
 	else
 	{
 		Log.Info("assign name to " + AIStation.GetName(AIStation.GetStationID(road_stop[0])), Log.LVL_DEBUG);
-		ClueHelper.StoreInStationName(AIStation.GetStationID(road_stop[0]), pair[0].SaveToString());
+		ClueHelper.StoreInStationName(AIStation.GetStationID(road_stop[0]), STATION_SAVE_VERSION + " " + pair[0].SaveToString());
 
 		Log.Info("assign name to " + AIStation.GetName(AIStation.GetStationID(road_stop[1])), Log.LVL_DEBUG);
-		ClueHelper.StoreInStationName(AIStation.GetStationID(road_stop[1]), pair[1].SaveToString());
+		ClueHelper.StoreInStationName(AIStation.GetStationID(road_stop[1]), STATION_SAVE_VERSION + " " + pair[1].SaveToString());
 	}
 
 	// save town, industry, station and depot in connection data-structure.
@@ -1951,6 +2426,7 @@ function CluelessPlus::ConnectPair()
 	}
 
 	local connected = false;
+	local road_builder = RoadBuilder();
 	Log.Info("bus/truck-stops built", Log.LVL_INFO);
 	if(!failed)
 	{
@@ -1967,7 +2443,8 @@ function CluelessPlus::ConnectPair()
 			if(station_front_tile != depot_front_tile)
 			{
 				local repair = false;
-				connected = connected && ConnectByRoad(depot_front_tile, station_front_tile, repair, 5000) == RoadBuilder.CONNECT_SUCCEEDED; // -> start construct it from the station
+				local max_loops = 5000;
+				connected = connected && road_builder.ConnectTiles(depot_front_tile, station_front_tile, repair, max_loops) == RoadBuilder.CONNECT_SUCCEEDED; // -> start construct it from the station
 			}
 
 			if(!connected)
@@ -1986,9 +2463,9 @@ function CluelessPlus::ConnectPair()
 			// if it is impossible to reach one of the ends, that is quickly
 			// detected and we don't risk to spend *a lot* of time trying to find
 			// an impossible path
-			local con_ret = ConnectByRoad(from, to, repair, 500);
+			local con_ret = road_builder.ConnectTiles(from, to, repair, 500);
 			if(con_ret == RoadBuilder.CONNECT_FAILED_TIME_OUT) // no error was found path finding a litle bit from one end
-				con_ret = ConnectByRoad(to, from, repair, 100000);
+				con_ret = road_builder.ConnectTiles(to, from, repair, 100000);
 
 			connected = con_ret == RoadBuilder.CONNECT_SUCCEEDED;
 		}
@@ -1999,8 +2476,8 @@ function CluelessPlus::ConnectPair()
 	if(connected && !failed)
 	{	
 		Log.Info("connected by road", Log.LVL_INFO);
-		// BuyConnectionVehicles save the IDs of the bough buses in the connection data-structure
-		BuyConnectionVehicles(connection); 
+		// BuyNewConnectionVehicles save the IDs of the bough buses in the connection data-structure
+		BuyNewConnectionVehicles(connection); 
 		connection.FullLoadAtStations(true); // TODO
 		Log.Info("bough buses", Log.LVL_INFO);
 
@@ -2012,17 +2489,29 @@ function CluelessPlus::ConnectPair()
 
 		for(local i = 0; i < 2; i++)
 		{
+			local front_tiles = AIList();
+
 			if(connection.depot[i])
 			{
 				local front = AIRoad.GetRoadDepotFrontTile(connection.depot[i]);
 				AITile.DemolishTile(connection.depot[i]);
 				AIRoad.RemoveRoad(front, connection.depot[i]);
+
+				front_tiles.AddItem(front, 0);
+
 			}
 
 			if(connection.station[i])
 			{
 				local station_id = AIStation.GetStationID(connection.station[i]);
+				front_tiles.AddList(Station.GetRoadFrontTiles(station_id));
 				Station.DemolishStation(station_id);
+			}
+
+			// Go through all front tiles and remove the road up to the end/intersection
+			foreach(front_tile, _ in front_tiles)
+			{
+				RoadBuilder.RemoveRoadUpToRoadCrossing(front_tile);
 			}
 		}
 
@@ -2034,6 +2523,29 @@ function CluelessPlus::ConnectPair()
 	connection.date_built = AIDate.GetCurrentDate();
 	connection_list.append(connection); 
 
+	// Calculate build performance
+	if(!failed && connected)
+	{
+		local pf_loops_used = road_builder.GetPFLoopsUsed();
+		local build_loops_used = road_builder.GetBuildLoopsUsed();
+		local from = AIRoad.GetRoadStationFrontTile(road_stop[0]);
+		local to = AIRoad.GetRoadStationFrontTile(road_stop[1]);
+		local distance = AIMap.DistanceManhattan(from, to);
+
+		Log.Info("pf loops used:    " + pf_loops_used, Log.LVL_INFO);
+		Log.Info("build loops used: " + build_loops_used, Log.LVL_INFO);
+		Log.Info("over distance:    " + distance, Log.LVL_INFO);
+
+		local pf_performance = pf_loops_used / distance;
+		local build_performance = build_loops_used / distance;
+		local performance = distance * 7000 / (pf_loops_used + build_loops_used) - 62; // The constants are magic numbers that has been found by collecting data from several connections and tweaking the formula to give good results
+
+		// Allow the long term performance to be in the interval -30 to 110 (when used it is clamped to -20 to 100)
+		state_connect_performance = Helper.Clamp((state_connect_performance * 2 + performance) / 3, -30, 110);
+		Log.Info("Connect performance of this connection: " + performance, Log.LVL_INFO);
+		Log.Info("Long term performance rating:           " + state_connect_performance, Log.LVL_INFO);
+	}
+
 	// If we succeed to build the connection, revert to zero desperateness
 	if(!failed && connected)
 		state_desperateness = 0;
@@ -2043,16 +2555,18 @@ function CluelessPlus::ConnectPair()
 
 function CluelessPlus::GrowStation(station_id, station_type)
 {
+	Log.Info("GrowStation: Non-parallel grow function called", Log.LVL_DEBUG);
+
 	if(!AIStation.IsValidStation(station_id))
 	{
 		Log.Error("GrowStation: Can't grow invalid station", Log.LVL_INFO);
-		return false;
+		return RETURN_FAIL;
 	}
 
 	local existing_stop_tiles = AITileList_StationType(station_id, station_type);
 	local grow_max_distance = Helper.Clamp(7, 0, AIGameSettings.GetValue("station_spread") - 1);
 
-	Helper.SetSign(AIBaseStation.GetLocation(station_id) - 1, "grow");
+	Helper.SetSign(Direction.GetAdjacentTileInDirection(AIBaseStation.GetLocation(station_id), Direction.DIR_E), "<- grow");
 
 	// AIRoad.BuildStation wants another type of enum constant to decide if bus/truck should be built
 	local road_veh_type = 0;
@@ -2065,7 +2579,7 @@ function CluelessPlus::GrowStation(station_id, station_type)
 
 	local potential_tiles = AITileList();
 
-	for(local stop_tile = existing_stop_tiles.Begin(); existing_stop_tiles.HasNext(); stop_tile = existing_stop_tiles.Next())
+	foreach(stop_tile, _ in existing_stop_tiles)
 	{
 		potential_tiles.AddList(Tile.MakeTileRectAroundTile(stop_tile, grow_max_distance));
 	}
@@ -2086,17 +2600,19 @@ function CluelessPlus::GrowStation(station_id, station_type)
 	potential_tiles.KeepAboveValue(0);
 	//potential_tiles.RemoveValue(4);
 
-	potential_tiles.Valuate(AIMap.DistanceManhattan, existing_stop_tiles.Begin());
+	potential_tiles.Valuate(AIMap.DistanceManhattan, AIRoad.GetRoadStationFrontTile(existing_stop_tiles.Begin()) );
 	potential_tiles.Sort(AIAbstractList.SORT_BY_VALUE, true); // lowest value first
 
-	for(local try_tile = potential_tiles.Begin(); potential_tiles.HasNext(); try_tile = potential_tiles.Next())
+	foreach(try_tile, _ in potential_tiles)
 	{
 		local neighbours = Tile.GetNeighbours4MainDir(try_tile);
 
 		neighbours.Valuate(AIRoad.IsRoadTile);
 		neighbours.KeepValue(1);
 
-		for(local road_tile = neighbours.Begin(); neighbours.HasNext(); road_tile = neighbours.Next())
+		local road_builder = RoadBuilder();
+
+		foreach(road_tile, _ in neighbours)
 		{
 			if( (AIRoad.AreRoadTilesConnected(try_tile, road_tile) || ClueHelper.CanConnectToRoad(road_tile, try_tile)) &&
 					AITile.GetMaxHeight(try_tile) == AITile.GetMaxHeight(road_tile) )
@@ -2106,17 +2622,17 @@ function CluelessPlus::GrowStation(station_id, station_type)
 					// Make sure the new station part is connected with one of the existing parts (which is in turn should be
 					// connected with all other existing parts)
 					local repair = false;
-					if(this.ConnectByRoad(try_tile, AIRoad.GetRoadStationFrontTile(existing_stop_tiles.Begin()), repair, 10000) != RoadBuilder.CONNECT_SUCCEEDED)
+					if(road_builder.ConnectTiles(try_tile, AIRoad.GetRoadStationFrontTile(existing_stop_tiles.Begin()), repair, 10000) != RoadBuilder.CONNECT_SUCCEEDED)
 					{
 						AIRoad.RemoveRoadStation(try_tile);
-						return false;
+						continue;
 					}
 
 					local i = 0;
 					while(!AIRoad.AreRoadTilesConnected(try_tile, road_tile) && !AIRoad.BuildRoad(try_tile, road_tile))
 					{
 						// Try a few times to build the road if a vehicle is in the way
-						if(i++ == 10) return false;
+						if(i++ == 10) return RETURN_TIME_OUT;
 
 						local last_error = AIError.GetLastError();
 						if(last_error != AIError.ERR_VEHICLE_IN_THE_WAY) return false;
@@ -2124,13 +2640,216 @@ function CluelessPlus::GrowStation(station_id, station_type)
 						AIController.Sleep(5);
 					}
 
-					return true;
+					return RETURN_SUCCESS;
 				}
 			}
 		}
 	}
 	
-	return false;
+	return RETURN_FAIL;
+}
+
+function CluelessPlus::GrowStationParallel(station_id, station_type)
+{
+	if(!AIStation.IsValidStation(station_id))
+	{
+		Log.Error("GrowStationParallel: Can't grow invalid station", Log.LVL_INFO);
+		return RETURN_FAIL;
+	}
+
+	Helper.ClearAllSigns();
+
+	local road_veh_type = 0;
+	if(station_type == AIStation.STATION_BUS_STOP)
+		road_veh_type = AIRoad.ROADVEHTYPE_BUS;
+	else if(station_type == AIStation.STATION_TRUCK_STOP)
+		road_veh_type = AIRoad.ROADVEHTYPE_TRUCK;
+	else
+		KABOOOOOOOM_UNSUPPORTED_STATION_TYPE = 0;
+
+	local existing_stop_tiles = AITileList_StationType(station_id, station_type);
+
+	local tot_wait_days = 0;
+	local MAX_TOT_WAIT_DAYS = 30;
+	
+	foreach(stop_tile, _ in existing_stop_tiles)
+	{
+		local is_drive_through = AIRoad.IsDriveThroughRoadStationTile(stop_tile);
+		local front_tile = AIRoad.GetRoadStationFrontTile(stop_tile);
+
+		// Get the direction that the entry points at from the road stop
+		local entry_dir = Direction.GetDirectionToAdjacentTile(stop_tile, front_tile);
+
+		// Try to walk in sideways in both directions
+		local walk_dirs = [Direction.TurnDirClockwise45Deg(entry_dir, 2), Direction.TurnDirClockwise45Deg(entry_dir, 6)];
+		foreach(walk_dir in walk_dirs)
+		{
+			Log.Info( AIError.GetLastErrorString() );
+
+			local parallel_stop_tile = Direction.GetAdjacentTileInDirection(stop_tile, walk_dir);
+			local parallel_front_tile = Direction.GetAdjacentTileInDirection(front_tile, walk_dir);
+
+			local opposite_walk_dir = Direction.TurnDirClockwise45Deg(walk_dir, 4);
+			local dir_from_front_to_station = Direction.TurnDirClockwise45Deg(entry_dir, 4);
+
+			local parallel_back_tile = Direction.GetAdjacentTileInDirection(parallel_stop_tile, dir_from_front_to_station);
+
+			// cache if we own the parallel front tile or not as it is checked at at least 3 places.
+			local own_parallel_front_tile = AICompany.IsMine(AITile.GetOwner(parallel_front_tile));
+
+			Helper.SetSign(parallel_stop_tile, "par stop");
+
+			// Check that we don't have built anything on the parallel stop tile
+			if(!AICompany.IsMine(AITile.GetOwner(parallel_stop_tile)) &&
+
+					// Check that the parallel front tile doesn't contain anything that we own. (with the exception that road is allowed)
+					!(own_parallel_front_tile && !AIRoad.IsRoadTile(parallel_front_tile)) &&
+
+					// Does slopes allow construction
+					Tile.IsBuildOnSlope_FlatForTerminusInDirection(front_tile, walk_dir) && // from front tile to parallel front tile
+					Tile.IsBuildOnSlope_FlatForTerminusInDirection(parallel_front_tile, opposite_walk_dir) && // from parallel front tile to front tile
+					Tile.IsBuildOnSlope_FlatForTerminusInDirection(parallel_front_tile, dir_from_front_to_station) && // from parallel front tile to parallel station tile
+					Tile.IsBuildOnSlope_FlatForTerminusInDirection(parallel_stop_tile, entry_dir) && // from parallel station tile to parallel front tile
+					// Is the max heigh equal to allow construction
+					AITile.GetMaxHeight(front_tile) == AITile.GetMaxHeight(parallel_front_tile) && 
+					AITile.GetMaxHeight(front_tile) == AITile.GetMaxHeight(parallel_stop_tile)
+					)
+				
+			{
+				Log.Info("Landscape allow grow in parallel", Log.LVL_DEBUG);
+
+				// Get the number of connections from the parallel stop tile to its adjacent tiles
+				local num_stop_tile_connections = 0;
+				if(AIRoad.AreRoadTilesConnected(parallel_stop_tile, parallel_back_tile))  num_stop_tile_connections++;
+				if(AIRoad.AreRoadTilesConnected(parallel_stop_tile, parallel_front_tile)) num_stop_tile_connections++;
+				if(AIRoad.AreRoadTilesConnected(parallel_stop_tile, Direction.GetAdjacentTileInDirection(parallel_stop_tile, walk_dir))) num_stop_tile_connections++;
+
+				Log.Info("Num stop tile connections: " + num_stop_tile_connections, Log.LVL_DEBUG);
+
+				// If the parallel tile has more than one connection to adjacent tiles, then it is possible
+				// that an opponent is using the road tile as part of his/her/its route. Since we don't want
+				// to annoy our opponents by unfair play, don't use this parallel tile
+				if(num_stop_tile_connections > 1)
+				{
+					Log.Info("Parallel stop tile is (by road) connected to > 1 other tile => bail out (otherwise we could destroy someones road)", Log.LVL_DEBUG);
+					continue;
+				}
+
+				// Check if no buildings / unremovable / vehicles are in the way
+				local build = false;
+				{
+					local tm = AITestMode();
+					local am = AIAccounting();
+					build = AITile.DemolishTile(parallel_stop_tile) && 
+							(
+								// road can already exists or can be built
+								// OR 
+								// parallel front is not my property but can be demolished.
+								(
+									(AIRoad.AreRoadTilesConnected(front_tile, parallel_front_tile) || AIRoad.BuildRoad(front_tile, parallel_front_tile)) &&
+									(AIRoad.AreRoadTilesConnected(parallel_stop_tile, parallel_front_tile) || AIRoad.BuildRoad(parallel_stop_tile, parallel_front_tile))
+									|| (!own_parallel_front_tile && AITile.DemolishTile(parallel_front_tile))
+								) 
+							);
+
+					// Wait up to 10 days untill we have enough money to demolish + construct
+					local start = AIDate.GetCurrentDate();
+					while(am.GetCosts() * 2 > AICompany.GetBankBalance(AICompany.COMPANY_SELF))
+					{
+						local now = AIDate.GetCurrentDate();
+						local wait_time = now - start;
+						if(wait_time > 10 || tot_wait_days + wait_time > MAX_TOT_WAIT_DAYS)
+						{
+							return RETURN_NOT_ENOUGH_MONEY;
+						}
+					}
+					
+				}
+
+				if(build)
+				{
+					if(!AIRoad.AreRoadTilesConnected(front_tile, parallel_front_tile))
+					{	
+						// Wait untill there are no vehicles at front_tile
+						local tm = AITestMode();
+						local start = AIDate.GetCurrentDate();
+						local fail = false;
+						while(!AITile.DemolishTile(front_tile) && AIError.GetLastError() == AIError.ERR_VEHICLE_IN_THE_WAY)
+						{ 
+							// Keep track of the time
+							local now = AIDate.GetCurrentDate();
+							local wait_time = now - start;
+
+							// Stop if waited more than allowed in total
+							if(tot_wait_days + wait_time > MAX_TOT_WAIT_DAYS) 
+							{
+								return RETURN_TIME_OUT;
+							}
+
+							// Wait maximum 10 days
+							if(wait_time > 10)
+							{
+								fail = true;
+								break;
+							}
+
+							AIController.Sleep(5);
+						}
+
+						tot_wait_days += AIDate.GetCurrentDate() - start;
+
+						if(fail)
+						{
+							Log.Info("Failed to grow to a specific parallel tile because the front_tile had vehicles in the way for too long time.", Log.LVL_DEBUG);
+							continue;
+						}
+					}
+
+					// Force clearing of the parallel_stop_tile if it has some road on it since it could have a single road connection to another 
+					// road tile which would make it impossible to build a road stop on it after having built a road from the parallel_front_tile.
+					if( (!AITile.IsBuildable(parallel_stop_tile) || AIRoad.IsRoadTile(parallel_stop_tile))  && !AITile.DemolishTile(parallel_stop_tile))
+					{
+						Log.Info("Failed to grow to a specific parallel tile because the parallel_stop_tile couldn't be cleared", Log.LVL_DEBUG);
+						continue;
+					}
+
+					// Clear the parallel front tile if it is needed
+					// Forbid clearing the tile if we own it
+					if(!AIRoad.AreRoadTilesConnected(front_tile, parallel_front_tile) && !AIRoad.BuildRoad(front_tile, parallel_front_tile) && (own_parallel_front_tile || !AITile.DemolishTile(parallel_front_tile)))
+					{
+						Log.Info("Failed to grow to a specific parallel tile because the parallel_front_tile couln't be cleared", Log.LVL_DEBUG);
+						continue;
+					}
+
+					if(!AIRoad.AreRoadTilesConnected(front_tile, parallel_front_tile) && !AIRoad.BuildRoad(front_tile, parallel_front_tile))
+					{
+						Log.Info("Failed to grow to a specific parallel tile because couldn't connect front_tile and parallel_front_tile", Log.LVL_DEBUG);
+						continue;
+					}
+
+					if(!AIRoad.AreRoadTilesConnected(parallel_stop_tile, parallel_front_tile) && !AIRoad.BuildRoad(parallel_stop_tile, parallel_front_tile))
+					{
+						Log.Info("Failed to grow to a specific parallel tile because couldn't connect the parallel_stop_tile with the parallel_front_tile", Log.LVL_DEBUG);
+						continue;
+					}
+
+					if(!AIRoad.BuildRoadStation(parallel_stop_tile, parallel_front_tile, road_veh_type, station_id))
+					{
+						Log.Info("Failed to grow to a specific parallel tile because the road station couldn't be built at parallel_stop_tile", Log.LVL_DEBUG);
+						continue;
+					}
+
+					Log.Info("Growing to a specific parallel tile succeeded", Log.LVL_DEBUG);
+
+					// Succeeded to grow station
+					return RETURN_SUCCESS;
+				}
+			}
+		}
+		Log.Info( AIError.GetLastErrorString() );
+	}
+
+	return RETURN_FAIL;
 }
 
 function CargoOfVehicleValuator(vehicle_id)
@@ -2176,7 +2895,7 @@ function CluelessPlus::ReadConnectionsFromMap()
 
 		connection_list.append(connection);
 
-		Log.Info("Connection " + AIStation.GetName(AIStation.GetStationID(connection.station[0])) + " - " + AIStation.GetName(AIStation.GetStationID(connection.station[1])) + " added to connection list", Log.LVL_INFO);
+		Log.Info("Connection " + connection.GetName() + " added to connection list", Log.LVL_INFO);
 
 		foreach(station_tile in connection.station)
 		{
@@ -2187,7 +2906,7 @@ function CluelessPlus::ReadConnectionsFromMap()
 	}
 
 	// Destroy all unused stations so they don't cost money
-	for(local station_id = unused_stations.Begin(); unused_stations.HasNext(); station_id = unused_stations.Next())
+	foreach(station_id, _ in unused_stations)
 	{
 		Log.Warning("Station " + AIStation.GetName(station_id) + " is unused and will be removed", Log.LVL_INFO);
 
@@ -2198,7 +2917,7 @@ function CluelessPlus::ReadConnectionsFromMap()
 function CluelessPlus::ReadConnectionFromVehicle(vehId)
 {
 	local connection = Connection(this);
-	connection.cargo_type = ClueHelper.GetVehicleCargoType(vehId);
+	connection.cargo_type = Vehicle.GetVehicleCargoType(vehId);
 
 	connection.station = [];
 	connection.depot = [];
@@ -2234,11 +2953,39 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 		local station_id = AIStation.GetStationID(station_tile);
 
 		local save_str = ClueHelper.ReadStrFromStationName(station_id);
-		Log.Info(AIStation.GetName(station_id) + " " + save_str, Log.LVL_INFO);
-		local node = Node.CreateFromSaveString(save_str);
+		local space = save_str.find(" ");
+		local save_version = -1;
+		local node_save_str = null;
+		if(space != null)
+		{
+			save_version = save_str.slice(0, space);
+			node_save_str = save_str.slice(space + 1);
+
+			// Convert save version to integer
+			try
+			{
+				save_version = save_version.tointeger();
+			}
+			catch(e)
+			{
+				AILog.Warning("catched exception");
+				save_version = -1;
+			}
+		}
+
+		Log.Info("station save version: " + save_version, Log.LVL_INFO);
+		Log.Info("station save str: " + node_save_str, Log.LVL_INFO);
+
+		local node = null;
+		if(node_save_str != null && save_version >= 0)
+		{
+			node = Node.CreateFromSaveString(node_save_str);
+		}
 
 		if(node == null)
 		{
+			Log.Info("Node is null -> game has old pre version 19 station names", Log.LVL_INFO);
+
 			// Old CluelessPlus and/or loading from other AI
 			local town_id = AITile.GetClosestTown(station_tile);
 			local industry_id = -1;
@@ -2250,13 +2997,17 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 				return null; // The vehicle transports non-pax
 			}
 
-			local stop_tiles_for_veh = AITileList_StationType(station_id, AIRoad.GetRoadVehicleTypeForCargo(cargo_id));
+			local stop_tiles_for_veh = AITileList_StationType(station_id, Station.GetStationTypeOfVehicle(vehId));
 			if(stop_tiles_for_veh.IsEmpty())
 			{
+				Log.Warning("No bus stops at station " + AIError.GetLastErrorString(), Log.LVL_INFO);
 				return null; // There is no bus stops at the station
 			}
 
 			node = Node(town_id, industry_id, cargo_id);
+
+			// Update the station name to be compatible with the current storage method
+			ClueHelper.StoreInStationName(station_id, STATION_SAVE_VERSION + " " + node.SaveToString());
 		}
 
 		connection.town.append(node.town_id);
@@ -2273,10 +3024,45 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	
 	connection.date_built = estimated_construction_date;
 	connection.state = Connection.STATE_ACTIVE;
+	
+	// read connection state from vehicles
+	local active_count = 0;
+	local suspended_count = 0;
+	local close_conn_count = 0;
+	local sell_count = 0;
+	foreach(veh_id, _ in group)
+	{
+		local state = ClueHelper.ReadStrFromVehicleName(veh_id);
+
+		if(state == "active")
+			active_count++;
+		else if(state == "suspended")
+			suspended_count++;
+		else if(state == "close conn")
+			close_conn_count++;
+		else if(state == "sell")
+			sell_count++;
+		else
+			continue;
+
+		Log.Info("Vehicle has state: " + state, Log.LVL_DEBUG);
+	}
+
+	// For now just detect closing down and suspended named vehicles
+	if(close_conn_count > 0) {
+		connection.state = Connection.STATE_CLOSING_DOWN;
+	} else if(suspended_count > 0) {
+		connection.state = Connection.STATE_SUSPENDED;
+	} else { //if(sell_count != group.Count())
+		connection.state = Connection.STATE_ACTIVE;
+	}
 
 	// Detect broken connections
 	if(connection.depot.len() != 2 || connection.station.len() != 2 || connection.town.len() != 2)
 		connection.state = Connection.STATE_FAILED;
+
+	Helper.SetSign(connection.station[0], "state: " + connection.state);
+	Helper.SetSign(connection.station[1], "state: " + connection.state);
 
 	// Sleep a while if we are a slow AI
 	if(AIController.GetSetting("slow_ai") == 1)
@@ -2363,7 +3149,7 @@ function CluelessPlus::GetMaxMoney()
 	return max_possible_balance;
 }
 
-function CluelessPlus::BuildStopInTown(town, road_veh_type) // this function is ugly and should ideally be removed
+function CluelessPlus::BuildStopInTown(town, road_veh_type, accept_cargo = -1, produce_cargo = -1) // this function is ugly and should ideally be removed
 {
 	Log.Info("CluelessPlus::BuildStopInTown(" + AITown.GetName(town) + ")", Log.LVL_INFO);
 
@@ -2387,7 +3173,7 @@ function CluelessPlus::BuildStopInTown(town, road_veh_type) // this function is 
 	if(road_veh_type == AIRoad.ROADVEHTYPE_TRUCK)
 		what = "TRUCK_STOP";
 
-	return BuildNextToRoad(location, what, 50, 100 + AITown.GetPopulation(town) / 70, 1);
+	return BuildNextToRoad(location, what, accept_cargo, produce_cargo, 50, 100 + AITown.GetPopulation(town) / 70, 1);
 
 /*
 	local tiles = AITileList();
@@ -2445,29 +3231,23 @@ function CluelessPlus::BuildStopForIndustry(industry_id, cargo_id)
 	// Randomize which direction to try first when constructing to not get a strong bias towards building
 	// stations in one particular direction. It is however, enough to randomize once per industry. 
 	// (no need to randomize once per tile)
-	local dir_list = AIList();
-	for(local dir = Direction.DIR_FIRST; dir != Direction.DIR_LAST + 1; dir++)
-	{
-		if(!Direction.IsMainDir(dir))
-			continue;
-
-		dir_list.AddItem(dir, 0);
-	}
-	dir_list.Valuate(AIBase.RandItem);
-	dir_list.Sort(AIAbstractList.SORT_BY_VALUE, AIAbstractList.SORT_DESCENDING);
+	local dir_list = Direction.GetMainDirsInRandomOrder();
 
 	// Loop through the remaining tiles and see where we can put down a stop and a road infront of it
 	foreach(tile, _ in tile_list)
 	{
-		Helper.SetSign(tile, "ind stn");
+//		Helper.SetSign(tile, "ind stn");
 
 		// Go through all dirs and try to build in all directions until one succeeds
 		foreach(dir, _ in dir_list)
 		{
+			
 			local front_tile = Direction.GetAdjacentTileInDirection(tile, dir);
 
-			if(!Tile.IsBuildOnSlope_FlatInDirection(front_tile, dir)) // Only allow the front tile road to be flat
+			if(!Tile.IsBuildOnSlope_FlatForTerminusInDirection(front_tile, Direction.OppositeDir(dir))) // Check that the front tile can be connected to tile without using any DoCommands.
 				continue;
+
+			Helper.SetSign(tile, "front stn");
 
 			// First test build to see if there is a failure and only if it works build it in reality
 			{
@@ -2502,17 +3282,45 @@ function CluelessPlus::BuildStopForIndustry(industry_id, cargo_id)
 //    - it prefers to build the building near the starting-point
 function CluelessPlus::BuildBusStopNextToRoad(tile, min_loops, max_loops)
 {
-	return BuildNextToRoad(tile, "BUS_STOP", min_loops, max_loops, 1);
+	return BuildNextToRoad(tile, "BUS_STOP", -1, -1, min_loops, max_loops, 1);
 }
 function CluelessPlus::BuildTruckStopNextToRoad(tile, min_loops, max_loops)
 {
-	return BuildNextToRoad(tile, "TRUCK_STOP", min_loops, max_loops, 1);
+	return BuildNextToRoad(tile, "TRUCK_STOP", -1, -1, min_loops, max_loops, 1);
 }
 function CluelessPlus::BuildDepotNextToRoad(tile, min_loops, max_loops)
 {
-	return BuildNextToRoad(tile, "DEPOT", min_loops, max_loops, 1);
+	return BuildNextToRoad(tile, "DEPOT", -1, -1, min_loops, max_loops, 1);
 }
-function CluelessPlus::BuildNextToRoad(tile, what, min_loops, max_loops, try_number)
+
+// Score valuator to be uesd with the found_locations ScoreList in BuildNextToRoad
+function CluelessPlus::GetTileAcceptancePlusProduction_TimesMinusOne(pair, accept_cargo, produce_cargo)
+{
+	local station_tile = pair[0];
+	//local front_tile = pair[1]; // not used
+
+	local acceptance = -1;
+	local production = -1;
+
+	if(accept_cargo != -1)
+		acceptance = AITile.GetCargoAcceptance(station_tile, accept_cargo, 1, 1, 3);
+
+	if(produce_cargo != -1)
+		production = AITile.GetCargoProduction(station_tile, accept_cargo, 1, 1, 3);
+
+	// Get base score
+	local score = (acceptance + production);
+
+	// Add a random component up to a third of the acceptance/production sum
+	score = score + AIBase.RandRange(score / 3); 
+
+	// Multiply by -1
+	score = score * -1;
+
+	return score;
+}
+
+function CluelessPlus::BuildNextToRoad(tile, what, accept_cargo, produce_cargo, min_loops, max_loops, try_number)
 {
 	local start_tile = tile;
 
@@ -2529,7 +3337,7 @@ function CluelessPlus::BuildNextToRoad(tile, what, min_loops, max_loops, try_num
 	local adjacent_x, adjacent_y;
 	local adjacent_tile;
 
-	local adjacent_loop = [ [-1,0], [1,0], [0,-1], [0,1] ];
+	local adjacent_dir_list = Direction.GetMainDirsInRandomOrder();
 
 	if(!AIMap.IsValidTile(start_tile))
 	{
@@ -2605,17 +3413,29 @@ function CluelessPlus::BuildNextToRoad(tile, what, min_loops, max_loops, try_num
 		else
 		{
 			// scan adjacent tiles
-
-			foreach(adjacent_offset in adjacent_loop)
+			foreach(adjacent_dir, _ in adjacent_dir_list)
 			{
-				adjacent_x = curr_x + adjacent_offset[0];
-				adjacent_y = curr_y + adjacent_offset[1];
-
-				adjacent_tile = AIMap.GetTileIndex(adjacent_x, adjacent_y);
+				adjacent_tile = Direction.GetAdjacentTileInDirection(curr_tile, adjacent_dir);
 
 				if(!AIMap.IsValidTile(adjacent_tile))
 				{
-					Log.Warning("Adjacent tile is not valid", Log.LVL_INFO);
+					Log.Warning("Adjacent tile is not valid", Log.LVL_DEBUG);
+					continue;
+				}
+
+				if(accept_cargo != -1)
+				{
+					// Make sure the station will accept the given cargo
+					local acceptance = AITile.GetCargoAcceptance(adjacent_tile, accept_cargo, 1, 1, 3);
+					if(acceptance < 8)
+						continue;
+				}
+				if(produce_cargo != -1)
+				{
+					// Make sure the station will receive the given produced cargo
+					local production = AITile.GetCargoProduction(adjacent_tile, produce_cargo, 1, 1, 3);
+					if(production < 8)
+						continue;
 				}
 
 				if(AIRoad.AreRoadTilesConnected(curr_tile, adjacent_tile))
@@ -2703,6 +3523,15 @@ function CluelessPlus::BuildNextToRoad(tile, what, min_loops, max_loops, try_num
 		}
 	}
 
+	// if there is a accept/produce cargo use that to score the locations
+	if(accept_cargo != -1 || produce_cargo != -1)
+	{
+		// Valuate the list with (acceptance + production of cargoes) * -1
+		//
+		// By multiplying by -1, PopMin below will pick the best producing/accepting tile first
+		found_locations.ScoreValuate(this, GetTileAcceptancePlusProduction_TimesMinusOne, accept_cargo, produce_cargo);
+	}
+
 	// get best built building
 	local best_location = found_locations.PopMin();
 	if(best_location == null) // return null, if no location at all was found.
@@ -2743,7 +3572,7 @@ function CluelessPlus::BuildNextToRoad(tile, what, min_loops, max_loops, try_num
 		if(try_number <= 5)
 		{
 			Log.Info("BuildNextToRoad retries by calling itself", Log.LVL_INFO);
-			return BuildNextToRoad(tile, what, min_loops, max_loops, try_number+1);
+			return BuildNextToRoad(tile, what, -1, -1 min_loops, max_loops, try_number+1);
 		}
 		else
 			return null;
@@ -2832,8 +3661,8 @@ function CluelessPlus::FindRoadExtensionTile(road_tile, target_tile, min_loops, 
 	local green_list = ScoreList()
 	local red_list = [];
 
-	// TODO: Use ScoreList instead of a plain array.
-	local extend_list = []; // each item is an array: [tile, MH distance to target]
+	// each item is a tile, and the score is the MH distance to the target tile
+	local extend_list = FibonacciHeap();
 
 	local i = 0;
 	local ix, iy;
@@ -2885,7 +3714,7 @@ function CluelessPlus::FindRoadExtensionTile(road_tile, target_tile, min_loops, 
 				if(AIRoad.BuildRoad(curr_tile, adjacent_tile))
 				{
 					//AILog.Info("Possible to build road");
-					extend_list.append( [ curr_tile, AIMap.DistanceManhattan(curr_tile, target_tile) ] );
+					extend_list.Insert(curr_tile, AIMap.DistanceManhattan(curr_tile, target_tile));
 				}
 			}
 
@@ -2896,7 +3725,7 @@ function CluelessPlus::FindRoadExtensionTile(road_tile, target_tile, min_loops, 
 		}
 
 		// stop loop if at least one solution found and i > min_loops
-		if(extend_list.len() > 0 && i > min_loops)
+		if(extend_list.Count() > 0 && i > min_loops)
 		{
 			break;
 		}
@@ -2912,20 +3741,15 @@ function CluelessPlus::FindRoadExtensionTile(road_tile, target_tile, min_loops, 
 		}
 	}
 
-	if(extend_list.len() == 0)
+	if(extend_list.Count() == 0)
 	{
 		Log.Info("CluelessPlus::FindRoadExtensionTile: found zero solutions", Log.LVL_INFO);
 		return null;
 	}
-	else if(extend_list.len() == 1)
-		return extend_list[0][0];
 	else
 	{
-		extend_list.sort(FindRoadExtensionTile_SortByDistanceToTarget);
-		return extend_list[0][0];
+		return extend_list.Pop();
 	}
-
-	return null;
 }
 function CluelessPlus::FindRoadExtensionTile_SortByDistanceToTarget(a, b)
 {
@@ -2936,15 +3760,7 @@ function CluelessPlus::FindRoadExtensionTile_SortByDistanceToTarget(a, b)
 	return 0;
 }
 
-function CluelessPlus::ConnectByRoad(tile1, tile2, repair = false, max_loops = 1000)
-{
-	return RoadBuilder.ConnectTiles(tile1, tile2, 1, repair, max_loops);
-
-	// As of version 16 of CluelessPlus the old path finder was removed. If anyone is interested in a bad pathfinder then check out this place
-	// in the old <= version 15 sources. ;-)
-}
-
-function CluelessPlus::BuyConnectionVehicles(connection)
+function CluelessPlus::BuyNewConnectionVehicles(connection)
 {
 	local engine = connection.FindEngineModelToBuy();
 	local num = connection.NumVehiclesToBuy(engine);
@@ -2993,7 +3809,7 @@ function CluelessPlus::PlaceHQ(nearby_tile)
 	possible_tiles.Sort(AIAbstractList.SORT_BY_VALUE, true); // lowest cost first
 
 	// Go through the tiles starting from closest to nearby_tile and check if HQ can be built there
-	for(local hq_tile = tiles.Begin(); tiles.HasNext(); hq_tile = tiles.Next())
+	foreach(hq_tile, _ in tiles)
 	{
 		{{
 			local test = AITestMode();
@@ -3025,7 +3841,7 @@ function CluelessPlus::PlaceHQ(nearby_tile)
 	
 	// Since there might have been changes since the checking of 10 possible tiles was made to the terrain,
 	// try until we succeed, starting with the cheapest alternative.
-	for(local hq_tile = possible_tiles.Begin(); possible_tiles.HasNext(); hq_tile = possible_tiles.Next())
+	foreach(hq_tile, _ in possible_tiles)
 	{
 		if(AICompany.BuildCompanyHQ(hq_tile))
 		{
@@ -3033,7 +3849,7 @@ function CluelessPlus::PlaceHQ(nearby_tile)
 
 			if(AIController.GetSetting("slow_ai") == 1)
 			{
-				Log.Info("The AI is so happy with the new HQ so it can't think about anything else for a while..", Log.LVL_INFO);
+				Log.Info("The AI is so happy with the new HQ that it can't think about anything else for a while..", Log.LVL_INFO);
 				AIController.Sleep(200);
 				Log.Info("Oh, there is business to do also! :-)", Log.LVL_INFO);
 				AIController.Sleep(2);

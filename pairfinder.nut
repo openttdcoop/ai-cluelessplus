@@ -1,18 +1,30 @@
 
+/*
+ * When computing produced - transported, this
+ * factor gets multiplied with transported and
+ * then divided by 100. 
+ *
+ * A value > 100 means that the AI will be 
+ * discouraged to compete on resources with
+ * other AIs
+ */
+TRANSPORTED_FACTOR_PERCENT <- 150;
+
+
 class PairFinder {
 
-	town_nodes = null;
-	industry_nodes = null;
+	all_nodes = null;
 
 	constructor()
 	{
-		town_nodes = [];
-		industry_nodes = [];
+		all_nodes = [];
 	}
 
-	function AddNodes(connection_list);
-	function AddTownNodes(connection_list);
-	function AddIndustryNodes(connection_list);
+	function AddNodesSorted(connection_list);
+
+	// Helper functions to AddNodesSorted
+	function AddTownNodes(connection_list, node_heap);
+	function AddIndustryNodes(connection_list, node_heap);
 
 	// returns [source node, dest node]
 	function FindTwoNodesToConnect(maxDistance, desperateness, connection_list);
@@ -23,11 +35,9 @@ class PairFinder {
 	static function SquirrelListComperator_PairScore(pair1, pair2);
 }
 
-function PairFinder::AddNodes(connection_list)
+function PairFinder::AddNodesSorted(connection_list)
 {
-	town_nodes.clear();
-	industry_nodes.clear();
-
+	//// Get settings ////
 	/*
 	 * 0 = Towns only
 	 * 1 = Industries only
@@ -50,21 +60,34 @@ function PairFinder::AddNodes(connection_list)
 
 	Log.Info("allowed connection types: " + allowed_connection_types, Log.LVL_DEBUG);
 
+	//// Add Nodes to Fibonacci Heap ////
+	local node_heap = FibonacciHeap();
+
 	if(allowed_connection_types == 0 || allowed_connection_types == 2)
 	{
 		Log.Info("connect towns", Log.LVL_DEBUG);
-		AddTownNodes(connection_list);
+		AddTownNodes(connection_list, node_heap);
 	}
 	if(allowed_connection_types == 1 || allowed_connection_types == 2)
 	{
 		Log.Info("connect industries", Log.LVL_DEBUG);
-		AddIndustryNodes(connection_list);
+		AddIndustryNodes(connection_list, node_heap);
+	}
+
+	//// Move nodes to Squirrel List ////
+	all_nodes.clear();
+
+	while(node_heap.Count() > 0)
+	{
+		local node = node_heap.Pop();
+		all_nodes.append(node);
 	}
 }
 
-function PairFinder::AddTownNodes(connection_list)
+function PairFinder::AddTownNodes(connection_list, node_heap)
 {
 	local town_list = AITownList();
+	local allow_competition = AIController.GetSetting("allow_competition");
 	foreach(town_id, _ in town_list)
 	{
 		// Add nodes for all cargos which can be produced/accepted by towns
@@ -84,49 +107,75 @@ function PairFinder::AddTownNodes(connection_list)
 
 		foreach(cargo_id, _ in cargo_list)
 		{
+			// Skip if the cargo is already transported from the town and competition is not allowed
+			if(!allow_competition && AITown.GetLastMonthTransported(town_id, cargo_id) != 0)
+				continue;
+
 			local node = Node(town_id, -1, cargo_id);
 
 			// Only actually append the node if it accepts/produces the cargo - dummy nodes do not make anyone happy
 			if (node.IsCargoAccepted() || node.IsCargoProduced())
 			{
-				town_nodes.append(node);
+				node_heap.Insert(node, -1 * node.GetCargoValueAvailability());
 			}
 		}
 
-/*		local cargo_list = AICargoList();
-
-		// Only consider cargos if there is an engine available to transport it
-		cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
-
-		foreach(cargo_id, _ in cargo_list)
-		{
-			if (AITown.GetLastMonthProduction(town_id, cargo_id) > 0) // && 
-					//!ClueHelper.IsTownInConnectionList(connection_list, town_id, cargo_id))
-			{
-				town_nodes.append(Node(town_id, -1, cargo_id));
-			}
-		}
-*/
 	}
 }
 
-function PairFinder::AddIndustryNodes(connection_list)
+function PairFinder::AddIndustryNodes(connection_list, node_heap)
 {
 	local industry_list = AIIndustryList();
+	local cargo_list = AICargoList();
+
+	// Only consider cargos if there is an engine available to transport it
+	cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
+	cargo_list.KeepValue(1);
+
+	Log.Info("cargo_list size: " + cargo_list.Count(), Log.LVL_DEBUG);
+
+	local t_start = 0;
+	local t_end = 0;
+
+	local num_industries_added = 0;
+	local MAX_NUM_INDUSTRIES = 1000;
+	local industry_list_length = industry_list.Count();
+	local add_all = industry_list_length <= MAX_NUM_INDUSTRIES;
+	local i_industry = -1;
+
+	Log.Info("industry_list size: " + industry_list_length, Log.LVL_DEBUG);
+	Log.Info("add all: " + add_all, Log.LVL_DEBUG);
+
+	local allow_competition = AIController.GetSetting("allow_competition");
+	Log.Info("allow competition: " + allow_competition, Log.LVL_DEBUG);
+
 	foreach(industry_id, _ in industry_list)
 	{
-		local cargo_list = AICargoList();
+		if(!add_all)
+		{
+			++i_industry;
 
-		// Only consider cargos if there is an engine available to transport it
-		cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
+			local add = AIBase.Chance(MAX_NUM_INDUSTRIES, industry_list_length);
+
+			// Check if the amount needed is less than or equal to the amount of industries left in the list
+			if(MAX_NUM_INDUSTRIES - num_industries_added <= industry_list_length - i_industry)
+				add_all = true; // if so, just add all the remaining industries
+
+			if(!add)
+				continue;
+		}
 
 		foreach(cargo_id, _ in cargo_list)
 		{
-			if (/*!ClueHelper.IsIndustryInConnectionList(connection_list, industry_id, cargo_id) && */
-				(AIIndustry.GetLastMonthProduction(industry_id, cargo_id) > 0 || // cargo is produced
-				AIIndustry.IsCargoAccepted(industry_id, cargo_id)))              // or is accepted
+			if (AIIndustry.IsCargoAccepted(industry_id, cargo_id) || // is the cargo accepted
+				(
+					AIIndustry.GetLastMonthProduction(industry_id, cargo_id) > 0 // or cargo is it produced
+					&&
+					(allow_competition || AIIndustry.GetLastMonthTransported(industry_id, cargo_id) == 0) // and competition is allowed or there is no transportation
+				) )
 			{
-				industry_nodes.append(Node(-1, industry_id, cargo_id));
+				local node = Node(-1, industry_id, cargo_id);
+				node_heap.Insert(node, -1 * node.GetCargoValueAvailability());
 			}
 		}
 	}
@@ -135,14 +184,9 @@ function PairFinder::AddIndustryNodes(connection_list)
 function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connection_list)
 {
 	// Rebuild the list of nodes
-	this.AddNodes(connection_list);
-
-	// Get the best producing nodes. Town or industry doesn't matter.
-	local all_nodes = [];
-
-	all_nodes.extend(town_nodes);
-	all_nodes.extend(industry_nodes);
-	all_nodes.sort(Node.SquirrelListComperator_CargoValueAvailability);
+	this.AddNodesSorted(connection_list);
+	Log.Info("a total of " + all_nodes.len() + " nodes has been added", Log.LVL_SUB_DECISIONS);
+	Log.Info("all nodes has been sorted by cargo value availability", Log.LVL_DEBUG);
 
 	if(all_nodes.len() == 0)
 	{
@@ -150,11 +194,25 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 		return null;
 	}
 
+	// Get the ideal length
+
+	// TODO: Get ideal distance per cargo type for each vehicle type
+	/*{
+		local cargo_id = 0;
+		local engine_id = Strategy.FindEngineModelToPlanFor(cargo_id, AIVehicle.VT_ROAD);
+		local ideal_pax_distance = Engine.GetIdealTransportDistance(engine_id, cargo_id, -1);
+
+		//Log.Info("Plan for engine " + AIEngine.GetName(engine_id) + " which has an ideal transport distance of " + ideal_pax_distance);
+	}*/
+
 	local top_source_nodes = [];
 
 	local i = -1;
 	foreach(node in all_nodes)
 	{
+		if(!node.IsCargoProduced())
+			continue;
+
 		// Only accept nodes as sources if they are not in use for the given cargo
 		if(!Node.IsNodeInConnectionList(connection_list, node))
 		{
@@ -165,10 +223,9 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 		}
 	}
 
-	local best_pairs = [];
+	local global_best_pairs = FibonacciHeap();
 
 	// Find a good pair using one of the top-producing nodes
-	local score_list = AIList();
 	foreach(source_node in top_source_nodes)
 	{
 		local max_ideality_distance = 50; // accept max 50 tiles more/less than ideal distance
@@ -176,7 +233,7 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 		Log.Info("Source " + source_node.GetName(), Log.LVL_DEBUG);
 
 		// Look for nearby nodes that accept this cargo
-		score_list.Clear();
+		local local_best_pairs = FibonacciHeap();
 		local i = -1;
 		foreach(dest_node in all_nodes)
 		{
@@ -264,32 +321,28 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 			// Make a combined score of the production value and distance deviation
 			score = prod_value + (70 - dist_deviation) * 2 + bonus;
 
-			score_list.AddItem(i, score);
+			local_best_pairs.Insert([source_node, dest_node, score], -score);
 		}
 
-		// Sort the scores with highest score first
-		score_list.Sort(AIAbstractList.SORT_BY_VALUE, AIAbstractList.SORT_DESCENDING);
-
-		// Add the 5 best pairs from the current source to the list of found pairs
-		score_list.KeepTop(5);
-		foreach(idx, score in score_list)
+		// Copy the 5 best "local best" pairs to the "global best" list
+		for(local j = 0; j < 5 && local_best_pairs.Count() > 0; ++j)
 		{
-			local dest_node = all_nodes[idx];
-			best_pairs.append([source_node, dest_node, score]);
+			local pair = local_best_pairs.Pop();
+			local score = pair[2] + AIBase.RandRange(pair[2] / 3); // Randomize the scores a bit
+			global_best_pairs.Insert(pair, -score); 
 		}
 	}
 
-	Log.Info("there is " + best_pairs.len() + " found pairs", Log.LVL_SUB_DECISIONS);
+	Log.Info("there is " + global_best_pairs.Count() + " 'global best pairs'", Log.LVL_SUB_DECISIONS);
 
 	// Get the best pair of the best
-	best_pairs.sort(PairFinder.SquirrelListComperator_PairScore);
-
-	if(best_pairs.len() == 0)
+	local best_pair = global_best_pairs.Pop();
+	if(best_pair == null)
 		return null;
 
-	Log.Info("best pair score: " + best_pairs[0][2], Log.LVL_SUB_DECISIONS);
+	Log.Info("best pair score: " + best_pair[2], Log.LVL_SUB_DECISIONS);
 
-	return [best_pairs[0][0], best_pairs[0][1]]; // return [source node, dest node]
+	return [best_pair[0], best_pair[1]]; // return [source node, dest node]
 }
 
 /* static */ function PairFinder::TownDistanceIdealityValuator(town_id, node_tile)
@@ -314,6 +367,7 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 class Node {
 	town_id = null;
 	industry_id = null;
+	node_location = null; // for detecting moved industries (close down + reused id)
 	cargo_id = null;
 
 	constructor(townId, industryId, cargoId)
@@ -321,6 +375,14 @@ class Node {
 		this.town_id = townId;
 		this.industry_id = industryId;
 		this.cargo_id = cargoId;
+
+		// Store the original location of industry/town in this.node_location
+		if(AIIndustry.IsValidIndustry(industryId))
+			this.node_location = AIIndustry.GetLocation(industryId);
+		else if(AITown.IsValidTown(townId))
+			this.node_location = AITown.GetLocation(townId);
+		else
+			this.node_location = -1;
 	}
 
 	function SaveToString();
@@ -329,8 +391,12 @@ class Node {
 	// Compares town/industry id + cargo_id
 	function IsEqualTo(node);
 
-	function IsTown();
-	function IsIndustry();
+	// If no id is given (id == null), then the functions check if the node is any town/industry. Else it checks if it is a specific town id or industry id.
+	function IsTown(town_id = null);
+	function IsIndustry(industry_id = null);
+
+	function HasNodeDissapeared();
+
 	function GetName();
 	function GetLocation();
 	/*function GetDistanceManhattan(tile);*/
@@ -358,14 +424,22 @@ function Node::IsEqualTo(node)
 		(AIIndustry.IsValidIndustry(this.industry_id) && this.industry_id == node.industry_id);
 }
 
-function Node::IsTown()
+function Node::IsTown(town_id = null)
 {
-	return AITown.IsValidTown(this.town_id);
+	return AITown.IsValidTown(this.town_id) && (town_id == null || this.town_id == town_id);
 }
 
-function Node::IsIndustry()
+function Node::IsIndustry(industry_id = null)
 {
-	return AIIndustry.IsValidIndustry(this.industry_id);
+	return AIIndustry.IsValidIndustry(this.industry_id) && (industry_id == null || this.industry_id == industry_id);
+}
+
+function Node::HasNodeDissapeared()
+{
+	// Return true if
+	// - neither industry nor town
+	// - or if the industry id exists, but at another location than the original location
+	return !IsTown() && (!IsIndustry() || AIIndustry.GetLocation(this.industry_id) != this.node_location);
 }
 
 function Node::GetName()
@@ -436,7 +510,7 @@ function Node::GetCargoAvailability()
 		return 0;
 	}
 
-	return api.GetLastMonthProduction(self_id, this.cargo_id) - api.GetLastMonthTransported(self_id, this.cargo_id);
+	return api.GetLastMonthProduction(self_id, this.cargo_id) - (api.GetLastMonthTransported(self_id, this.cargo_id) * TRANSPORTED_FACTOR_PERCENT) / 100;
 }
 
 // returns [value, cargo_id] for the cargo with higest value availability
@@ -444,6 +518,7 @@ function Node::GetCargoValueAvailability()
 {
 	local api = null;
 	local self_id = -1;
+
 	if(this.IsTown())
 	{
 		api = AITown;
@@ -459,7 +534,7 @@ function Node::GetCargoValueAvailability()
 		return 0;
 	}
 
-	return (api.GetLastMonthProduction(self_id, this.cargo_id) - api.GetLastMonthTransported(self_id, this.cargo_id)) * 
+	return (api.GetLastMonthProduction(self_id, this.cargo_id) - (api.GetLastMonthTransported(self_id, this.cargo_id) * TRANSPORTED_FACTOR_PERCENT) / 100) * 
 			AICargo.GetCargoIncome(this.cargo_id, 150, 20); // assume 150 tiles and 20 days in transit
 }
 

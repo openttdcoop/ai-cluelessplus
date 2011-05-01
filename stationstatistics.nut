@@ -7,7 +7,7 @@
 // Author: Zuu (Leif Linse), user Zuu @ tt-forums.net
 // Purpose: To play around with the noai framework.
 //               - Not to make the next big thing.
-// Copyright: Leif Linse - 2009, 2010
+// Copyright: Leif Linse - 2009-2011
 // License: GNU GPL - version 2
 
 
@@ -33,10 +33,10 @@ class StationStatistics {
 
 		cargo_waiting = -1;
 		rating = -1;
-		usage = { bus =    {station_type = AIStation.STATION_BUS_STOP,   mode = AIVehicle.VT_ROAD, percent_usage = -1}, 
-				truck =    {station_type = AIStation.STATION_TRUCK_STOP, mode = AIVehicle.VT_ROAD, percent_usage = -1},
-				aircraft = {station_type = AIStation.STATION_AIRPORT,    mode = AIVehicle.VT_AIR,  percent_usage = -1},
-				train =    {station_type = AIStation.STATION_TRAIN,      mode = AIVehicle.VT_RAIL, percent_usage = -1} };
+		usage = { bus =    {station_type = AIStation.STATION_BUS_STOP,   mode = AIVehicle.VT_ROAD, percent_usage = -1, percent_usage_max_tile = -1}, 
+				truck =    {station_type = AIStation.STATION_TRUCK_STOP, mode = AIVehicle.VT_ROAD, percent_usage = -1, percent_usage_max_tile = -1},
+				aircraft = {station_type = AIStation.STATION_AIRPORT,    mode = AIVehicle.VT_AIR,  percent_usage = -1, percent_usage_max_tile = -1},
+				train =    {station_type = AIStation.STATION_TRAIN,      mode = AIVehicle.VT_RAIL, percent_usage = -1, percent_usage_max_tile = -1} };
 	}
 
 	static function VehicleIsWithinTileList(vehicle_id, tile_list);
@@ -90,33 +90,50 @@ function StationStatistics::ReadStatisticsData()
 				station_vehicle_list.KeepValue(transp_mode_usage.mode);
 
 				local num_vehicles_on_station = 0;
+				local max_num_vehicles_per_tile = 0;
 
-				for(local vehicle = station_vehicle_list.Begin(); station_vehicle_list.HasNext(); vehicle = station_vehicle_list.Next())
+				foreach(tile, _ in station_tile_list)
 				{
-					for(local tile = station_tile_list.Begin(); station_tile_list.HasNext(); tile = station_tile_list.Next())
+					local num_vehicles_on_this_tile = 0;
+					foreach(vehicle, _ in station_vehicle_list)
 					{
 						if(AIVehicle.GetLocation(vehicle) == tile)
 						{
-							num_vehicles_on_station++;
+							num_vehicles_on_this_tile++;
 						}
 					}
+
+					num_vehicles_on_station += num_vehicles_on_this_tile;
+					if(num_vehicles_on_this_tile > max_num_vehicles_per_tile)
+						max_num_vehicles_per_tile = num_vehicles_on_this_tile;
 				}
 
 				local new_percent_usage = num_vehicles_on_station * 100 / station_tile_list.Count();
+				local new_percent_usage_max_tile = max_num_vehicles_per_tile * 100;
 
 				if(transp_mode_usage.percent_usage == -1)
 					transp_mode_usage.percent_usage = new_percent_usage;
 				else
 					transp_mode_usage.percent_usage = (transp_mode_usage.percent_usage * alpha + new_percent_usage) / (alpha + 1);
+
+				if(transp_mode_usage.percent_usage_max_tile == -1)
+					transp_mode_usage.percent_usage_max_tile = new_percent_usage_max_tile;
+				else
+					transp_mode_usage.percent_usage_max_tile = (transp_mode_usage.percent_usage_max_tile * alpha + new_percent_usage_max_tile) / (alpha + 1);
 			}
 		}
 		else
 		{
 			transp_mode_usage.percent_usage = -1;
+			transp_mode_usage.percent_usage_max_tile = -1;
 		}
 	}
 
 	//AILog.Info("bus usage = " + this.usage.bus.percent_usage);
 
-	Helper.SetSign(AIBaseStation.GetLocation(station_id), "w" + cargo_waiting + " r" + rating + " u" + Helper.Max(usage.bus.percent_usage, usage.truck.percent_usage) + " a" + usage.aircraft.percent_usage);
+	Helper.SetSign(AIBaseStation.GetLocation(station_id), "w" + cargo_waiting + 
+			" r" + rating + 
+			" u" + Helper.Max(usage.bus.percent_usage, usage.truck.percent_usage) + 
+			" um" + Helper.Max(usage.bus.percent_usage_max_tile, usage.truck.percent_usage_max_tile) +
+			" a" + usage.aircraft.percent_usage);
 }

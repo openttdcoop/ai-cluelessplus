@@ -7,7 +7,7 @@
 // Author: Zuu (Leif Linse), user Zuu @ tt-forums.net
 // Purpose: To play around with the noai framework.
 //               - Not to make the next big thing.
-// Copyright: Leif Linse - 2008-2010
+// Copyright: Leif Linse - 2008-2011
 // License: GNU GPL - version 2
 
 // This class contain helper functions that has not been merged into 
@@ -24,7 +24,6 @@ class ClueHelper {
 
 	static function CanConnectToRoad(road_tile, adjacent_tile_to_connect);
 
-	static function GetVehicleCargoType(vehicle_id);
 
 	// Creates a string such as 0001
 	static function IntToStrFill(int_val, num_digits);
@@ -74,7 +73,7 @@ function ClueHelper::SetSign(tile, message, force = false)
 
 	local found = false;
 	local sign_list = AISignList();
-	for(local i = sign_list.Begin(); sign_list.HasNext(); i = sign_list.Next())
+	foreach(i, _ in sign_list)
 	{
 		if(AISign.GetLocation(i) == tile)
 		{
@@ -112,7 +111,7 @@ function ClueHelper::BreakPoint(sign_tile)
 function ClueHelper::HasSign(text)
 {
 	local sign_list = AISignList();
-	for(local i = sign_list.Begin(); sign_list.HasNext(); i = sign_list.Next())
+	foreach(i, _ in sign_list)
 	{
 		if(AISign.GetName(i) == text)
 		{
@@ -298,29 +297,6 @@ function ClueHelper::CanConnectToRoad(road_tile, adjacent_tile_to_connect)
 	return true;
 }
 
-function ClueHelper::GetVehicleCargoType(vehicle_id)
-{
-	// Go through all cargos and check the capacity for each
-	// cargo.
-	local max_cargo = -1;
-	local max_cap = -1;
-
-	local cargos = AICargoList();
-	foreach(cargo, _ in cargos)
-	{
-		local cap = AIVehicle.GetCapacity(vehicle_id, cargo);
-		if(cap > max_cap)
-		{
-			max_cap = cap;
-			max_cargo = cargo;
-		}
-	}
-
-	// Return the cargo which the vehicle has highest capacity
-	// for.
-	return max_cargo;
-}
-
 function ClueHelper::IntToStrFill(int_val, num_digits)
 {
 	local str = int_val.tostring();
@@ -405,7 +381,7 @@ function ClueHelper::StoreInObjectName(obj_id, obj_api_class, str)
 
 	while(!obj_api_class.SetName(obj_id, obj_name))
 	{
-		AILog.Info(AIError.GetLastErrorString())
+		Log.Info(AIError.GetLastErrorString(), Log.LVL_DEBUG)
 		i++;
 		obj_name = str + " " + ClueHelper.EncodeIntegerInStr(i, 2);
 
