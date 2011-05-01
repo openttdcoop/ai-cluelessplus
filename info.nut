@@ -38,15 +38,16 @@ class FCluelessPlusPlusAI extends AIInfo {
 	function GetShortName()   { return "CLUP"; } // CLUP is the non SVN short name. CLUS is used by the SVN development edition
 	function GetDescription() { return "CluelessPlus connects towns and industries using road transport. CluelessPlus tries to do its job without causing major jams for other transport companies using jam detection mechanisms."; }
 	function GetAPIVersion()  { return "1.0"; }
-	function GetVersion()     { return 24; }
+	function GetVersion()     { return 25; }
 	function MinVersionToLoad() { return 1; }
-	function GetDate()        { return "2011-04-09"; }
+	function GetDate()        { return "2011-05-01"; }
 	function GetUrl()         { return "http://junctioneer.net/o-ai/CLUP"; }
 	function UseAsRandomAI()  { return true; }
 	function CreateInstance() { return "CluelessPlus"; }
 
 	function GetSettings() {
 		AddSetting({name = "slow_ai", description = "Think and build slower", easy_value = 1, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
+		AddSetting({name = "expand_local", description = "Build new connections nearby existing ones (simple growing boundary box)", easy_value = 1, medium_value = 1, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		AddSetting({name = "allow_competition", description = "Allow competition against existing transport links", easy_value = 0, medium_value = 0, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		AddSetting({name = "connection_types", description = "", easy_value = 0, medium_value = 2, hard_value = 2, custom_value = 2, min_value = 0, max_value = 2, flags = AICONFIG_INGAME});
 		AddSetting({name = "max_num_bus_stops", description = "Maximum number of bus/truck stops per station to build" easy_value = 1, medium_value = 2, hard_value = 4, custom_value = 4, flags = AICONFIG_INGAME, min_value = 1, max_value = 16});

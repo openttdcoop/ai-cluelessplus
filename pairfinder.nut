@@ -33,6 +33,9 @@ class PairFinder {
 	static function IndustryDistanceIdealityValuator(industry_id, node_tile);
 
 	static function SquirrelListComperator_PairScore(pair1, pair2);
+
+	static function IsPairNearExistingNetwork(node1, node2, connection_list);
+	static function ExistingNetworkAreaPreCache(connection_list, desperateness);
 }
 
 function PairFinder::AddNodesSorted(connection_list)
@@ -188,6 +191,8 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 	Log.Info("a total of " + all_nodes.len() + " nodes has been added", Log.LVL_SUB_DECISIONS);
 	Log.Info("all nodes has been sorted by cargo value availability", Log.LVL_DEBUG);
 
+	Log.Info("desperateness: " + desperateness, Log.LVL_DEBUG);
+
 	if(all_nodes.len() == 0)
 	{
 		Log.Info("No locations to transport between was found. This can happen if there are no buses/lories available or if there is nothing more to connect.", Log.LVL_SUB_DECISIONS);
@@ -225,6 +230,14 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 
 	local global_best_pairs = FibonacciHeap();
 
+	// Get the setting if the AI should expand new connections local to existing ones or simply look at the entire map.
+	local setting_expand_local = AIController.GetSetting("expand_local");
+	local existing_network_area_cached = null;
+	if(setting_expand_local)
+	{
+		existing_network_area_cached = PairFinder.ExistingNetworkAreaPreCache(connection_list, desperateness);
+	}
+
 	// Find a good pair using one of the top-producing nodes
 	foreach(source_node in top_source_nodes)
 	{
@@ -249,6 +262,11 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 			{
 				continue;
 			}
+
+			// If expand_local is enabled, reject all pairs that are not near the existing network.
+			// This uses a simple boundary box model that should execute fairly fast. (essentially 2 API calls and 4 comparisons)
+			if(setting_expand_local == 1 && !PairFinder.IsPairNearExistingNetwork(source_node, dest_node, existing_network_area_cached))
+				continue;
 
 			// Check that there exist no connection already between these two nodes
 			local existing_connection = Node.FindNodePairInConnectionList(connection_list, source_node, dest_node);
@@ -343,6 +361,92 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 	Log.Info("best pair score: " + best_pair[2], Log.LVL_SUB_DECISIONS);
 
 	return [best_pair[0], best_pair[1]]; // return [source node, dest node]
+}
+
+/*
+ * Compute the bounding box of the current network in order to speedup the
+ * IsPairNearExistingNetwork function that is called once for every pair that
+ * make it to the top N pairs.
+ */
+/* static */ function PairFinder::ExistingNetworkAreaPreCache(connection_list, desperateness)
+{
+	if(connection_list == null || connection_list.len() == 0)
+		return null;
+
+	local min_x = 100000;
+	local min_y = 100000;
+	local max_x = 0;
+	local max_y = 0;
+
+	foreach(conn in connection_list)
+	{
+		local loc_list = [conn.node[0].GetLocation(), conn.node[1].GetLocation()];
+
+		foreach(loc in loc_list)
+		{
+			local x = AIMap.GetTileX(loc);
+			local y = AIMap.GetTileY(loc);
+		
+			if(x < min_x)
+				min_x = x;
+			if(x > max_x)
+				max_x = x;	
+			if(y < min_y)
+				min_y = y;
+			if(y > max_y)
+				max_y = y;
+		}
+	}
+
+	local allowed_distance = desperateness > 1 ? desperateness * 20 : desperateness * 5;
+
+	min_x -= allowed_distance;
+	min_y -= allowed_distance;
+	max_x += allowed_distance;
+	max_y += allowed_distance;
+
+	local network_boundary = {
+		min_x = min_x, 
+		min_y = min_y, 
+		max_x = max_x, 
+		max_y = max_y
+	};
+
+	Helper.SetSign( AIMap.GetTileIndex(min_x, min_y), "min xy" );
+	Helper.SetSign( AIMap.GetTileIndex(max_x, max_y), "max xy" );
+
+	return {
+		boundary = network_boundary, 
+		connection_list = connection_list
+	};
+}
+
+/* static */ function PairFinder::IsPairNearExistingNetwork(node1, node2, pre_cached_existing_network)
+{
+	if(node1 == null || node2 == null)
+		return false;
+
+	// If this is the first connection, it will be reported as it is within an existing
+	// network area so that all locations are valid for the first connection.
+	if(pre_cached_existing_network == null)
+		return true;
+
+	local loc_list = [node1.GetLocation(), node2.GetLocation()];
+	local boundary = pre_cached_existing_network.boundary;
+	
+	local inside = false;
+	foreach(loc in loc_list)
+	{
+		local x = AIMap.GetTileX(loc);
+		local y = AIMap.GetTileY(loc);
+
+		if(x >= boundary.min_x && x <= boundary.max_x &&
+				y >= boundary.min_y && y <= boundary.max_y)
+			inside = true;
+	}
+		
+	// It is enough that one of the two nodes is inside or nearby the boundary box of the current network.
+	return inside;
 }
 
 /* static */ function PairFinder::TownDistanceIdealityValuator(town_id, node_tile)
