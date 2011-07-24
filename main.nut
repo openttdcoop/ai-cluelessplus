@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 
-import("util.superlib", "SuperLib", 7);
+import("util.superlib", "SuperLib", 9);
 
 Log <- SuperLib.Log;
 Helper <- SuperLib.Helper;
@@ -42,11 +42,12 @@ Industry <- SuperLib.Industry;
 Order <- SuperLib.Order;
 OrderList <- SuperLib.OrderList;
 
+RoadBuilder <- SuperLib.RoadBuilder;
+
 import("queue.fibonacci_heap", "FibonacciHeap", 2);
 
 require("pairfinder.nut"); 
 require("sortedlist.nut");
-require("roadbuilder.nut"); 
 require("clue_helper.nut");
 require("stationstatistics.nut");
 require("strategy.nut");
@@ -1471,17 +1472,28 @@ function Connection::RepairRoadConnection()
 
 	AICompany.SetLoanAmount(AICompany.GetMaxLoanAmount());
 	local road_builder = RoadBuilder();
+	if(AIController.GetSetting("slow_ai")) road_builder.EnableSlowAI();
 	local repair = true;
-	local connect_result = road_builder.ConnectTiles(front1, front2, repair, 50000) == RoadBuilder.CONNECT_SUCCEEDED;
-	connect_result = connect_result && road_builder.ConnectTiles(front2, front1, repair, 50000) == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
+	road_builder.Init(front1, front2, repair, 50000);
+	local connect_result = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED;
+	if(connect_result)
+	{
+		road_builder.Init(front2, front1, repair, 50000);
+		connect_result = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
+	}	
 
 	if(!connect_result)
 	{
 		// retry but without higher penalty for constructing new road
 		Log.Warning("Failed to repair route -> try again but without high penalty for building new road", Log.LVL_INFO);
 		repair = false;
-		connect_result = road_builder.ConnectTiles(front1, front2, repair, 100000) == RoadBuilder.CONNECT_SUCCEEDED;
-		connect_result = connect_result && road_builder.ConnectTiles(front2, front1, repair, 100000) == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
+		road_builder.Init(front1, front2, repair, 100000);
+		connect_result = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED;
+		if(connect_result)
+		{
+			road_builder.Init(front2, front1, repair, 100000);
+			connect_result = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED; // also make sure the connection works in the reverse direction
+		}
 	}
 
 	if(!connect_result)
@@ -1681,7 +1693,6 @@ class CluelessPlus extends AIController {
 	loaded_from_save = false;
 
 	pair_finder = null;
-	road_builder = null;
 	connection_list = [];
 
 	detected_rail_crossings = null;
@@ -1701,7 +1712,6 @@ class CluelessPlus extends AIController {
 		stop = false;
 		loaded_from_save = false;
 		pair_finder = PairFinder();
-		road_builder = RoadBuilder();
 		connection_list = [];
 
 		detected_rail_crossings = AIList();
@@ -1795,10 +1805,11 @@ function CluelessPlus::Start()
 		Log.Info("All connections have been read from the map", Log.LVL_INFO);
 	}
 
-	if(AIGameSettings.IsDisabledVehicleType(AIVehicle.VT_ROAD))
+	if(AIGameSettings.IsDisabledVehicleType(AIVehicle.VT_ROAD) || AIGameSettings.GetValue("max_roadveh") == 0)
 	{
 		Log.Error("Road transport mode is disabled for AIs. This AI is road-only.", Log.LVL_INFO);
 		Log.Info("Enable road transport mode in advanced settings if you want that this AI should build something", Log.LVL_INFO);
+		Log.Info("", Log.LVL_INFO);
 	}
 	
 	state_build = false;
@@ -2427,6 +2438,7 @@ function CluelessPlus::ConnectPair()
 
 	local connected = false;
 	local road_builder = RoadBuilder();
+	if(AIController.GetSetting("slow_ai")) road_builder.EnableSlowAI();
 	Log.Info("bus/truck-stops built", Log.LVL_INFO);
 	if(!failed)
 	{
@@ -2444,7 +2456,11 @@ function CluelessPlus::ConnectPair()
 			{
 				local repair = false;
 				local max_loops = 5000;
-				connected = connected && road_builder.ConnectTiles(depot_front_tile, station_front_tile, repair, max_loops) == RoadBuilder.CONNECT_SUCCEEDED; // -> start construct it from the station
+				if(connected)
+				{
+					road_builder.Init(depot_front_tile, station_front_tile, repair, max_loops); // -> start construct it from the station
+					connected = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED;
+				}
 			}
 
 			if(!connected)
@@ -2463,9 +2479,13 @@ function CluelessPlus::ConnectPair()
 			// if it is impossible to reach one of the ends, that is quickly
 			// detected and we don't risk to spend *a lot* of time trying to find
 			// an impossible path
-			local con_ret = road_builder.ConnectTiles(from, to, repair, 500);
+			road_builder.Init(from, to, repair, 500);
+			local con_ret = road_builder.ConnectTiles();
 			if(con_ret == RoadBuilder.CONNECT_FAILED_TIME_OUT) // no error was found path finding a litle bit from one end
-				con_ret = road_builder.ConnectTiles(to, from, repair, 100000);
+			{
+				road_builder.Init(to, from, repair, 100000);
+				con_ret = road_builder.ConnectTiles();
+			}
 
 			connected = con_ret == RoadBuilder.CONNECT_SUCCEEDED;
 		}
@@ -2611,6 +2631,7 @@ function CluelessPlus::GrowStation(station_id, station_type)
 		neighbours.KeepValue(1);
 
 		local road_builder = RoadBuilder();
+		if(AIController.GetSetting("slow_ai")) road_builder.EnableSlowAI();
 
 		foreach(road_tile, _ in neighbours)
 		{
@@ -2622,7 +2643,8 @@ function CluelessPlus::GrowStation(station_id, station_type)
 					// Make sure the new station part is connected with one of the existing parts (which is in turn should be
 					// connected with all other existing parts)
 					local repair = false;
-					if(road_builder.ConnectTiles(try_tile, AIRoad.GetRoadStationFrontTile(existing_stop_tiles.Begin()), repair, 10000) != RoadBuilder.CONNECT_SUCCEEDED)
+					road_builder.Init(try_tile, AIRoad.GetRoadStationFrontTile(existing_stop_tiles.Begin()), repair, 10000);
+					if(road_builder.ConnectTiles() != RoadBuilder.CONNECT_SUCCEEDED)
 					{
 						AIRoad.RemoveRoadStation(try_tile);
 						continue;
