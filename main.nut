@@ -51,6 +51,7 @@ require("sortedlist.nut");
 require("clue_helper.nut");
 require("stationstatistics.nut");
 require("strategy.nut");
+require("transport_mode_stats.nut");
 
 require("return_values.nut");
 
