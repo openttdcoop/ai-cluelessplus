@@ -674,7 +674,7 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 						continue;
 					Log.Info("Upgrade vehicle " + i + ": " + AIVehicle.GetName(i) + " (state: " + veh_state + ")", Log.LVL_SUB_DECISIONS);
 
-					if(Vehicle.GetVehiclesLeft(AIVehicle.GetVehicleType(veh)) > 0)
+					if(Vehicle.GetVehiclesLeft(AIVehicle.GetVehicleType(i)) > 0)
 					{
 						// There is enough vehicle slots to build new vehicle first, and then sell.
 						local veh = AIVehicle.BuildVehicle(depot, engine);
@@ -1202,8 +1202,8 @@ function CluelessPlus::ReadConnectionsFromMap()
 {
 	// Get all road vehicles that carries passengers => buses
 	local uncategorized_vehicles = AIVehicleList();
-	uncategorized_vehicles.Valuate(AIVehicle.GetVehicleType);
-	uncategorized_vehicles.KeepValue(AIVehicle.VT_ROAD);
+	//uncategorized_vehicles.Valuate(AIVehicle.GetVehicleType);
+	//uncategorized_vehicles.KeepValue(AIVehicle.VT_ROAD);
 	//uncategorized_vehicles.Valuate(CargoOfVehicleValuator);
 	//uncategorized_vehicles.KeepValue(Helper.GetPAXCargo());
 
@@ -1230,12 +1230,13 @@ function CluelessPlus::ReadConnectionsFromMap()
 		if(connection == null || connection.station.len() != 2)
 		{
 			Log.Warning("Couldn't create connection object for this connection", Log.LVL_INFO);
+			SendLostVehicleForSelling(veh_id);
 			continue;
 		}
 
 		connection_list.append(connection);
 
-		Log.Info("Connection " + connection.GetName() + " added to connection list", Log.LVL_INFO);
+		Log.Info("Connection " + connection.GetName() + " (transport mode: " + TransportModeToString(connection.transport_mode) + ") added to connection list", Log.LVL_INFO);
 
 		foreach(station_tile in connection.station)
 		{
@@ -1296,7 +1297,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 				
 			}
 
-			Log.Info("Added station: " + AIStation.GetName(station_id), Log.LVL_INFO);
+			Log.Info("Added station: " + AIStation.GetName(station_id), Log.LVL_SUB_DECISIONS);
 			connection.station.append(station_tile);
 			connection.station_statistics.append(StationStatistics(station_id, connection.cargo_type));
 		}
@@ -1310,7 +1311,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	// fail if less than two stations were found
 	if(connection.station.len() != 2)
 	{
-		Log.Warning("Connection has != 2 stations -> fail", Log.LVL_INFO);
+		Log.Warning("Connection has != 2 stations -> fail | tm: " + TransportModeToString(connection.transport_mode) + " veh: " + AIVehicle.GetName(vehId), Log.LVL_INFO);
 		return null;
 	}
 
@@ -1343,8 +1344,8 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 			}
 		}
 
-		Log.Info("station save version: " + save_version, Log.LVL_INFO);
-		Log.Info("station save str: " + node_save_str, Log.LVL_INFO);
+		Log.Info("station save version: " + save_version, Log.LVL_DEBUG);
+		Log.Info("station save str: " + node_save_str, Log.LVL_SUB_DECISIONS);
 
 		local node = null;
 		if(node_save_str != null && save_version >= 0)
