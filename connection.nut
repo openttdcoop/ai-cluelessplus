@@ -597,7 +597,22 @@ function Connection::ManageState()
 
 					// However, if the stations are not much in use, it is better to keep the connection
 					// active to not cause bad station ratings.
-					if(this.max_station_usage > 135 || this.max_station_tile_usage > 180)
+					local check = false;
+					switch(this.transport_mode)
+					{
+						case TM_ROAD:
+							check = this.max_station_usage > 135 || this.max_station_tile_usage > 180;
+							break;
+
+						case TM_RAIL:
+							check = this.max_station_usage > 135; // tweak
+							break;
+
+						default:
+							check = false;
+					}
+
+					if(check)
 					{
 						this.SuspendConnection();
 					}
@@ -1121,7 +1136,7 @@ function Connection::ManageVehicles()
 			switch(this.transport_mode)
 			{
 				case TM_ROAD:
-					too_high_usage = this.max_station_usage > 200 || this.max_station_tile_usage > 230;
+					too_high_usage = this.max_station_usage > 195 || this.max_station_tile_usage > 220;
 					sell_check = income < 0 || too_high_usage || max_waiting < 10;
 					break;
 
@@ -1235,8 +1250,27 @@ function Connection::ManageVehicles()
 			Log.Info("Don't buy/sell vehicles yet", Log.LVL_INFO);
 		}
 
-		Log.Info("min_rating = " + min_rating + " max_rating = " + max_rating + " max_waiting = " + max_waiting, Log.LVL_INFO);
-		if(this.IsTownOnly())
+		local very_high_usage = false;
+		switch(this.transport_mode)
+		{
+			case TM_ROAD:
+				very_high_usage = this.max_station_usage >= 220 || this.max_station_tile_usage >= 235; // make sure these values are higher than for sell_check.
+				Log.Info("max usage: " + this.max_station_usage + " max tile: " + this.max_station_tile_usage, Log.LVL_INFO);
+				break;
+
+			case TM_AIR:
+				very_high_usage = this.max_station_usage > 400;
+				break;
+
+			case TM_RAIL:
+				very_high_usage = this.max_station_usage > 300; // tweak
+				break;
+		}
+
+		Log.Info("min_rating = " + min_rating + " max_rating = " + max_rating + " max_waiting = " + max_waiting + " very_high_usage = " + very_high_usage, Log.LVL_INFO);
+		if(very_high_usage)
+			FullLoadAtStations(false);
+		else if(this.IsTownOnly())
 			FullLoadAtStations(min_rating < 40 && max_rating < 65 && max_waiting < 70);
 		else
 			FullLoadAtStations(true);
