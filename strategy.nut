@@ -2,13 +2,13 @@
 class Strategy {
 
 
-	static function FindEngineModelToPlanFor(cargo_id, vehicle_type);
-	static function FindEngineModelToBuy(cargo_id, vehicle_type);
+	static function FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only);
+	static function FindEngineModelToBuy(cargo_id, vehicle_type, small_aircraft_only);
 
 	static function EngineBuyScore(engine_id);
 }
 
-function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type)
+function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only)
 {
 	// find a bus model to buy
 	local bus_list = AIEngineList(vehicle_type);
@@ -30,6 +30,14 @@ function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type)
 
 	if (vehicle_type == AIVehicle.VT_AIR)
 	{
+		bus_list.Valuate(AIEngine.GetPlaneType);
+		bus_list.RemoveValue(AIAirport.PT_HELICOPTER); // helicopters are good at jamming up airports, so avoid them
+		if(small_aircraft_only)
+		{
+			// Exclude large aircrafts
+			bus_list.KeepValue(AIAirport.PT_SMALL_PLANE);
+		}
+
 		// Exclude aircrafts that don't have an buildable airport type
 		bus_list.Valuate(Helper.ItemValuator);
 		foreach(plane, _ in bus_list)
@@ -52,9 +60,9 @@ function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type)
 	return bus_list.IsEmpty()? -1 : bus_list.Begin();
 }
 
-function Strategy::FindEngineModelToBuy(cargo_id, vehicle_type)
+function Strategy::FindEngineModelToBuy(cargo_id, vehicle_type, small_aircraft_only)
 {
-	return Strategy.FindEngineModelToPlanFor(cargo_id, vehicle_type);
+	return Strategy.FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only);
 }
 
 function Strategy::EngineBuyScore(engine_id)

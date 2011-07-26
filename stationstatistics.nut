@@ -78,9 +78,16 @@ function StationStatistics::ReadStatisticsData()
 
 			if(transp_mode_usage.station_type == AIStation.STATION_AIRPORT)
 			{
-				// Disabled for ClueLess
+				local hangar_num = Airport.GetNumNonStopedAircraftsInAirportDepot(this.station_id);
+				local holding_num = Airport.GetNumAircraftsInAirportQueue(this.station_id);
+				local new_percent_usage = (holding_num + hangar_num)* 100;
+				if(transp_mode_usage.percent_usage == -1)
+					transp_mode_usage.percent_usage = new_percent_usage;
+				else
+					transp_mode_usage.percent_usage = (transp_mode_usage.percent_usage * alpha + new_percent_usage) / (alpha + 1);
 
-				// Checkout the PAXLink AI for airport implementation
+				Helper.SetSign(AIStation.GetLocation(station_id) + 2, "hold: " + holding_num + " han: " + hangar_num);
+				Helper.SetSign(AIStation.GetLocation(station_id) + 3, "queue: " + (new_percent_usage / 100));
 			}
 			else
 			{

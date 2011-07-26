@@ -16,13 +16,11 @@ class ClueHelper {
 
 	static function TownDistance(town1, town2);
 	static function StepFunction(t);
-	static function ArrayFind(array, toFind);
 	static function TileLocationString(tile);
 
 	static function IsTownInConnectionList(connection_list, check_town, cargo_id = -1); // cargo_id = -1 -> any cargo is enough
 	static function IsIndustryInConnectionList(connection_list, check_industry, cargo_id = -1);
 
-	static function CanConnectToRoad(road_tile, adjacent_tile_to_connect);
 
 
 	// Creates a string such as 0001
@@ -160,20 +158,6 @@ function ClueHelper::IsIndustryInConnectionList(connection_list, check_industry,
 	return false;
 }
 
-// RETURN null if not found, else the key to the found value.
-function ClueHelper::ArrayFind(array, toFind)
-{
-	
-	foreach(key, val in array)
-	{
-		if(val == toFind)
-		{
-			return key;
-		}
-	}
-	return null;
-}
-
 function ClueHelper::GetPAXCargo()
 {
 	local cargo_list = AICargoList();
@@ -266,35 +250,6 @@ function ClueHelper::Max(a, b)
 function ClueHelper::Abs(a)
 {
 	return a >= 0? a : -a;
-}
-
-function ClueHelper::CanConnectToRoad(road_tile, adjacent_tile_to_connect)
-{
-	// If road_tile don't have road type "road" (ie it is only a tram track), then we can't connect to it
-	if(!AIRoad.HasRoadType(road_tile, AIRoad.ROADTYPE_ROAD))
-		return false;
-
-	local neighbours = Tile.GetNeighbours4MainDir(road_tile);
-	
-	neighbours.Valuate(Helper.ItemValuator);
-	neighbours.RemoveValue(adjacent_tile_to_connect);
-
-	// This function requires that road_tile is connected with at least one other road tile.
-	neighbours.Valuate(AIRoad.IsRoadTile);
-	if(Helper.ListValueSum(neighbours) < 1)
-		return false;
-	
-	foreach(neighbour_tile_id in neighbours)
-	{
-		if(AIRoad.IsRoadTile(neighbour_tile_id))
-		{
-			local ret = AIRoad.CanBuildConnectedRoadPartsHere(road_tile, neighbour_tile_id, adjacent_tile_to_connect);
-			if(ret == 0 || ret == -1)
-				return false;
-		}
-	}
-
-	return true;
 }
 
 function ClueHelper::IntToStrFill(int_val, num_digits)

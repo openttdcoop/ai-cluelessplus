@@ -26,7 +26,10 @@ class PairFinder {
 	function AddTownNodes(connection_list, node_heap);
 	function AddIndustryNodes(connection_list, node_heap);
 
-	// returns [source node, dest node]
+	// returns {
+	//   pair -> [source node, dest node]
+	//   transport_mode -> TM_*
+	// }
 	function FindTwoNodesToConnect(maxDistance, desperateness, connection_list);
 
 	static function TownDistanceIdealityValuator(town_id, node_tile);
@@ -184,7 +187,7 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 	}
 }
 
-function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connection_list)
+function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 {
 	// Rebuild the list of nodes
 	this.AddNodesSorted(connection_list);
@@ -227,6 +230,13 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 			if (i >= 8 * (1 + desperateness)) break;
 		}
 	}
+
+	// transport modes to try for each pair
+	local try_tm = [];
+	if(Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW)
+		try_tm.append(TM_AIR);
+	if(Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW)
+		try_tm.append(TM_ROAD);
 
 	local global_best_pairs = FibonacciHeap();
 
@@ -282,22 +292,41 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 				continue;
 			}
 
-			local score = 0;
-
-			local dist = AIMap.DistanceManhattan(dest_node.GetLocation(), source_node.GetLocation());
-			local dist_deviation = Helper.Abs(80 - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
-
-			if (dist > maxDistance)
-				continue;
-
-			if (dist_deviation > 70)
-				continue;
-
-			if (dist < 20)
-				continue;
-
 			if(!dest_node.IsCargoAccepted())
 				continue;
+
+			// The selection of TM simply tries different TMs until a one that can handle the pair
+			// is found. Later either the order of tests or some other way it should be randomized or improved
+			local transport_mode = TM_INVALID;
+
+			local dist = AIMap.DistanceManhattan(dest_node.GetLocation(), source_node.GetLocation());
+			foreach(tm in try_tm)
+			{
+				// At the moment, only town to town connections can be made via aircraft
+				if(tm == TM_AIR && (!dest_node.IsTown() || !source_node.IsTown()))
+					continue;
+
+				local dist_deviation = Helper.Abs(g_tm_stats[tm].ideal_construct_distance - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
+
+				if (dist > g_tm_stats[tm].max_construct_distance)
+					continue;
+
+				if (dist_deviation > g_tm_stats[tm].max_construct_distance_deviation)
+					continue;
+
+				if (dist < g_tm_stats[tm].min_construct_distance)
+					continue;
+
+				// The pair can be connected using transport_mode
+				transport_mode = tm;
+				break;
+			}
+
+			// Check if no transport mode could handle the pair
+			if(transport_mode == TM_INVALID)
+				continue;
+
+			local score = 0;
 
 			// Penalty if the source industry can't increase production
 			local no_prod_increase_penalty = 0;
@@ -320,7 +349,7 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 					no_prod_increase_penalty += (4000 * (extra_value.tofloat() / prod_value.tofloat()) ).tointeger();
 				}
 
-				prod_value += extra_value
+				prod_value += extra_value;
 			}
 
 			// Check if the destination is already supplyed with cargo => bonus score
@@ -337,9 +366,13 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 			}
 
 			// Make a combined score of the production value and distance deviation
+			local dist_deviation = Helper.Abs(g_tm_stats[transport_mode].ideal_construct_distance - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
 			score = prod_value + (70 - dist_deviation) * 2 + bonus;
 
-			local_best_pairs.Insert([source_node, dest_node, score], -score);
+			if(transport_mode == TM_AIR)
+				score += 200; // at 2000, several air-links are built, but they aren't as good as the road links from an economical point of view.
+
+			local_best_pairs.Insert([source_node, dest_node, score, transport_mode], -score);
 		}
 
 		// Copy the 5 best "local best" pairs to the "global best" list
@@ -358,9 +391,20 @@ function PairFinder::FindTwoNodesToConnect(maxDistance, desperateness, connectio
 	if(best_pair == null)
 		return null;
 
+	Log.Info("top-list: ", Log.LVL_DEBUG);
+	Log.Info(best_pair[0].GetName() + " - " + best_pair[1].GetName() + " using " + TransportModeToString(best_pair[3]) + " => score: " + best_pair[2], Log.LVL_DEBUG);
+	while(global_best_pairs.Count() > 0)
+	{
+		local pair = global_best_pairs.Pop();
+		Log.Info(pair[0].GetName() + " - " + pair[1].GetName() + " using " + TransportModeToString(pair[3]) + " => score: " + pair[2], Log.LVL_DEBUG);
+	}
+
 	Log.Info("best pair score: " + best_pair[2], Log.LVL_SUB_DECISIONS);
 
-	return [best_pair[0], best_pair[1]]; // return [source node, dest node]
+	return {
+		pair = [best_pair[0], best_pair[1]], // [source node, dest node]
+		transport_mode = best_pair[3],
+	};
 }
 
 /*

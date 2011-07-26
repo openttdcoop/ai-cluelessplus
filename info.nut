@@ -4,14 +4,14 @@
 //                                                                  //
 //////////////////////////////////////////////////////////////////////
 // 
-// CluelessPlus need some help from you in order to function. First, and
+// Clueless need some help from you in order to function. First, and
 // most important he would be happy if you turn off build-on-slope in 
 // the patch-settings. This is because he can only build roads from 
 // center to center (of tiles).
 // 
 // Also he prefers flat, smooth maps with low sea-level. The map should
 // have low amount of towns and no industries. Industries are big and 
-// scary. CluelessPlus don't know how to build around them.
+// scary. Clueless don't know how to build around them.
 //
 // He haven't interacted that much with players so be kind to him.  
 // Don't build nasty railways that block his way. He don't know how
@@ -36,11 +36,11 @@ class FCluelessPlusPlusAI extends AIInfo {
 	function GetAuthor()      { return "Zuu"; }
 	function GetName()        { return "CluelessPlus"; }
 	function GetShortName()   { return "CLUP"; } // CLUP is the non SVN short name. CLUS is used by the SVN development edition
-	function GetDescription() { return "CluelessPlus connects towns and industries using road transport. CluelessPlus tries to do its job without causing major jams for other transport companies using jam detection mechanisms."; }
+	function GetDescription() { return "CluelessPlus connects towns and industries using road and air transport. CluelessPlus tries to do its job without causing major jams for other transport companies using jam detection mechanisms."; }
 	function GetAPIVersion()  { return "1.0"; }
-	function GetVersion()     { return 25; }
+	function GetVersion()     { return 26; }
 	function MinVersionToLoad() { return 1; }
-	function GetDate()        { return "2011-05-01"; }
+	function GetDate()        { return "2011-07-26"; }
 	function GetUrl()         { return "http://junctioneer.net/o-ai/CLUP"; }
 	function UseAsRandomAI()  { return true; }
 	function CreateInstance() { return "CluelessPlus"; }
