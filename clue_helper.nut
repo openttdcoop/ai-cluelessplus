@@ -64,69 +64,6 @@ function ClueHelper::TileLocationString(tile)
 	return "(" + AIMap.GetTileX(tile) + ", " + AIMap.GetTileY(tile) + ")";
 }
 
-function ClueHelper::SetSign(tile, message, force = false)
-{
-	if(AIController.GetSetting("debug_signs") != 1 && force == false)
-		return;
-
-	local found = false;
-	local sign_list = AISignList();
-	foreach(i, _ in sign_list)
-	{
-		if(AISign.GetLocation(i) == tile)
-		{
-			if(found)
-				AISign.RemoveSign(i);
-			else
-			{
-				if(message == "")
-					AISign.RemoveSign(i);
-				else
-					AISign.SetName(i, message);
-				found = true;
-			}
-		}
-	}
-
-	if(!found)
-		AISign.BuildSign(tile, message);
-}
-
-// Places a sign on tile sign_tile and waits until the sign gets removed
-function ClueHelper::BreakPoint(sign_tile)
-{
-	if(AIController.GetSetting("debug_signs") != 1)
-		return;
-
-	if(Helper.HasSign("no_break"))
-		return;
-
-	AILog.Warning("Break point reached. -> Remove the \"break\" sign to continue.");
-	local sign = AISign.BuildSign(sign_tile, "break");
-	while(AISign.IsValidSign(sign)) { AIController.Sleep(1); }
-}
-
-function ClueHelper::HasSign(text)
-{
-	local sign_list = AISignList();
-	foreach(i, _ in sign_list)
-	{
-		if(AISign.GetName(i) == text)
-		{
-			return true;
-		}
-	}
-	return false;
-}
-function ClueHelper::ClearAllSigns()
-{
-	local sign_list = AISignList();
-	for(local i = sign_list.Begin(); sign_list.HasNext(); i = sign_list.Next())
-	{
-		AISign.RemoveSign(i);
-	}
-}
-
 function ClueHelper::IsTownInConnectionList(connection_list, check_town, cargo_id = -1)
 {
 	foreach(val in connection_list)
