@@ -762,14 +762,12 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 
 		to_send_to_depot.Valuate(AIOrder.IsGotoDepotOrder, AIOrder.ORDER_CURRENT);
 		to_send_to_depot.KeepValue(0);
-		to_send_to_depot.Valuate(AIVehicle.IsStoppedInDepot);
-		to_send_to_depot.KeepValue(0);
 
 		Log.Info("  num vehicles that does not go to depot: " + to_send_to_depot.Count(), Log.LVL_DEBUG);
 		foreach(i, _ in to_send_to_depot)
 		{
 			Log.Info("Send broken vehicle '" + AIVehicle.GetName(i) + "' to depot", Log.LVL_SUB_DECISIONS);
-			AIVehicle.SendVehicleToDepot(i); // send to depot
+			SendLostVehicleForSelling(i);
 		}
 	}
 }
@@ -1236,7 +1234,7 @@ function CluelessPlus::ReadConnectionsFromMap()
 
 		connection_list.append(connection);
 
-		Log.Info("Connection " + connection.GetName() + " (transport mode: " + TransportModeToString(connection.transport_mode) + ") added to connection list", Log.LVL_INFO);
+		Log.Info("Connection " + connection.GetName() + " added to connection list", Log.LVL_INFO);
 
 		foreach(station_tile in connection.station)
 		{

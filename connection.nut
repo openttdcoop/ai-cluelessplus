@@ -122,7 +122,7 @@ function Connection::GetName()
 {
 	// Quick version if the connection is okay.
 	if(node.len() == 2 && node[0] != null && node[1] != null)
-		return node[0].GetName() + " - " + node[1].GetName();
+		return node[0].GetName() + " - " + node[1].GetName() + " (" + TransportModeToString(transport_mode) + ")";
 
 	// If one or more node is broken:
 	return "[broken connection]";
