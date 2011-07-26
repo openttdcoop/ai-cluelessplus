@@ -370,7 +370,7 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 			score = prod_value + (70 - dist_deviation) * 2 + bonus;
 
 			if(transport_mode == TM_AIR)
-				score += 200; // at 2000, several air-links are built, but they aren't as good as the road links from an economical point of view.
+				score += 1000; // at 2000, several air-links are built, but they aren't as good as the road links from an economical point of view.
 
 			local_best_pairs.Insert([source_node, dest_node, score, transport_mode], -score);
 		}

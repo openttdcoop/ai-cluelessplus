@@ -674,7 +674,7 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 						continue;
 					Log.Info("Upgrade vehicle " + i + ": " + AIVehicle.GetName(i) + " (state: " + veh_state + ")", Log.LVL_SUB_DECISIONS);
 
-					if( AIVehicleList().Count() < AIGameSettings.GetValue("max_roadveh") )
+					if(Vehicle.GetVehiclesLeft(AIVehicle.GetVehicleType(veh)) > 0)
 					{
 						// There is enough vehicle slots to build new vehicle first, and then sell.
 						local veh = AIVehicle.BuildVehicle(depot, engine);
