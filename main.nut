@@ -174,17 +174,26 @@ function IsAirportTypeBetterThan(ap_type, other_ap_type)
 	return ap_type > other_ap_type;
 }
 
+function IsAircraftDumpStation(station_id)
+{
+	local save_str = ClueHelper.ReadStrFromStationName(station_id);
+	local space = save_str.find(" ");
+	local save_version = -1;
+	local node_save_str = null;
+	if(space == null)
+		return false;
+	save_version = save_str.slice(0, space);
+	node_save_str = save_str.slice(space + 1);
+	return node_save_str == STATION_SAVE_AIRCRAFT_DUMP;
+}
+
 function IsGoToAircraftDumpOrder(vehicle_id, order_id)
 {
 	local dest = AIOrder.GetOrderDestination(vehicle_id, order_id);
 	local station_id = AIStation.GetStationID(dest);
-	if(dest != null && (station_id == g_aircraft_dump_airport_small || station_id == g_aircraft_dump_airport_large))
-	{
-		return true;
-	}
-
-	return false;
+	return IsAircraftDumpStation(station_id);
 }
+
 function HasVehicleGoToAircraftDumpOrder(vehicle_id)
 {
 	for(local i = 0; i < AIOrder.GetOrderCount(vehicle_id); ++i)
@@ -792,8 +801,8 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 		{
 			local veh_state = ClueHelper.ReadStrFromVehicleName(i);
 
-			// Don't sell suspended / active vehicles
-			if(veh_state == "suspended" || veh_state == "active")
+			// Don't sell suspended / active vehicles, or vehicles waiting for airport upgrade
+			if(veh_state == "suspended" || veh_state == "active" || veh_state == "ap upgrade")
 				continue;
 			
 			// Don't sell vehicles that has been told to upgrade
@@ -1383,8 +1392,7 @@ function CluelessPlus::ReadConnectionsFromMap()
 	foreach(station_id, _ in unused_stations)
 	{
 		// Don't remove the airport dump stations, instead store their station id:s in the global vars for large + small dump airport
-		local save_str = ClueHelper.ReadStrFromStationName(station_id);
-		if(save_str == STATION_SAVE_AIRCRAFT_DUMP)
+		if(IsAircraftDumpStation(station_id))
 		{
 			local ap_tile = Airport.GetAirportTile(station_id);
 			if(ap_tile != null && AIMap.IsValidTile(ap_tile)) // verify that the station has an airport
@@ -1439,11 +1447,6 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 			local stn_tile_list = AITileList_StationType(station_id, station_type); // Resolve a station tile with the right transport mode.
 			local station_tile = stn_tile_list.Begin();
 
-			// Ignore the aircraft dump airport if it is in the orders
-			local save_str = ClueHelper.ReadStrFromStationName(station_id);
-			if(save_str == STATION_SAVE_AIRCRAFT_DUMP)
-				continue;
-
 			if(stn_tile_list.Count() == 0)
 			{
 				Log.Error("Couldn't find station tile of the right station type for station " + AIStation.GetName(station_id) + ". Engine: " + AIEngine.GetName(AIVehicle.GetEngineType(vehId)) + ". Transport Mode: " + connection.transport_mode + ".", Log.LVL_INFO);
@@ -1458,7 +1461,17 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 
 		if(AIOrder.IsGotoDepotOrder(vehId, i_order))
 		{
-			connection.depot.append(AIOrder.GetOrderDestination(vehId, i_order));
+			local order_dest = AIOrder.GetOrderDestination(vehId, i_order);
+			
+			// Ignore the aircraft dump airport if it's hangar is in the orders
+			if(AIAirport.IsAirportTile(order_dest))
+			{
+				local station_id = AIStation.GetStationID(order_dest);
+				if(IsAircraftDumpStation(station_id))
+					continue;
+			}
+
+			connection.depot.append(order_dest);
 		}
 	}
 
@@ -1554,6 +1567,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	local active_count = 0;
 	local suspended_count = 0;
 	local close_conn_count = 0;
+	local ap_upgrade_count = 0;
 	local sell_count = 0;
 	foreach(veh_id, _ in group)
 	{
@@ -1565,6 +1579,8 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 			suspended_count++;
 		else if(state == "close conn")
 			close_conn_count++;
+		else if(state == "ap upgrade")
+			ap_upgrade_count++;
 		else if(state == "sell")
 			sell_count++;
 		else
@@ -1573,18 +1589,30 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 		Log.Info("Vehicle has state: " + state, Log.LVL_DEBUG);
 	}
 
-	// For now just detect closing down and suspended named vehicles
+	// For now just detect closing down, suspended and airport upgrade named vehicles
 	if(close_conn_count > 0) {
 		connection.state = Connection.STATE_CLOSING_DOWN;
 	} else if(suspended_count > 0) {
 		connection.state = Connection.STATE_SUSPENDED;
+	} else if(ap_upgrade_count > 0) {
+		connection.state = Connection.STATE_AIRPORT_UPGRADE;
 	} else { //if(sell_count != group.Count())
 		connection.state = Connection.STATE_ACTIVE;
 	}
 
+	Log.Info("Connection state before fail-check: " + connection.state, Log.LVL_DEBUG);
+
 	// Detect broken connections
 	if(connection.depot.len() != 2 || connection.station.len() != 2 || connection.town.len() != 2)
 		connection.state = Connection.STATE_FAILED;
+
+	Log.Info("Connection state after fail-check: " + connection.state, Log.LVL_DEBUG);
+
+	// show loaded state in debug sign
+	foreach(stn in connection.station)
+	{
+		Helper.SetSign(Tile.GetTileRelative(AIStation.GetLocation(AIStation.GetStationID(stn)), 1, 1), "state:" + connection.state);
+	}
 
 	// Sleep a while if we are a slow AI
 	if(AIController.GetSetting("slow_ai") == 1)
