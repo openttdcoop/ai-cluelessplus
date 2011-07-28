@@ -50,11 +50,11 @@ function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircra
 	}
 
 	// Exclude engines that can't be built
-	bus_list.Valuate(AIEngine.IsBuildable)
+	bus_list.Valuate(AIEngine.IsBuildable);
 	bus_list.KeepValue(1); 
 
 	// Buy the vehicle with highest score
-	bus_list.Valuate(Strategy.EngineBuyScore)
+	bus_list.Valuate(Strategy.EngineBuyScore);
 	bus_list.KeepTop(1);
 
 	return bus_list.IsEmpty()? -1 : bus_list.Begin();

@@ -96,6 +96,10 @@ function PairFinder::AddTownNodes(connection_list, node_heap)
 	local allow_competition = AIController.GetSetting("allow_competition");
 	foreach(town_id, _ in town_list)
 	{
+		// Ignore towns with too low rating
+		if(!Town.TownRatingAllowStationBuilding(town_id))
+			continue;
+
 		// Add nodes for all cargos which can be produced/accepted by towns
 		local produced_cargo_list = Helper.GetTownProducedCargoList();
 		local accepted_cargo_list = Helper.GetTownAcceptedCargoList();
@@ -157,6 +161,10 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 
 	foreach(industry_id, _ in industry_list)
 	{
+		// Ignore industries in towns with too low rating
+		if(!Town.TownRatingAllowStationBuilding(AITile.GetClosestTown(AIIndustry.GetLocation(industry_id))))
+			continue;
+
 		if(!add_all)
 		{
 			++i_industry;
@@ -547,6 +555,7 @@ class Node {
 
 	function GetName();
 	function GetLocation();
+	function GetClosestTown();
 	/*function GetDistanceManhattan(tile);*/
 
 	// Checks the LastMonthProduction + Transported
@@ -606,6 +615,17 @@ function Node::GetLocation()
 		return AITown.GetLocation(this.town_id);
 	if(IsIndustry())
 		return AIIndustry.GetLocation(this.industry_id);
+
+	return -1;
+}
+
+function Node::GetClosestTown()
+{
+	if(IsTown())
+		return this.town_id;
+	
+	if(IsIndustry())
+		return AITile.GetClosestTown(AIIndustry.GetLocation(this.industry_id));
 
 	return -1;
 }

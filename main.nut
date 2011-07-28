@@ -40,6 +40,7 @@ Vehicle <- SuperLib.Vehicle;
 Station <- SuperLib.Station;
 Airport <- SuperLib.Airport;
 Industry <- SuperLib.Industry;
+Town <- SuperLib.Town;
 
 Order <- SuperLib.Order;
 OrderList <- SuperLib.OrderList;
@@ -60,7 +61,12 @@ require("connection.nut");
 
 
 STATION_SAVE_VERSION <- "0";
+STATION_SAVE_AIRCRAFT_DUMP <- "Air Service";
 MIN_VEHICLES_TO_BUILD_NEW <- 5; // minimum number of vehicles left in order to allow building new connections for a given transport mode
+
+// Airport where aircrafts are "dumped" while airports are upgraded
+g_aircraft_dump_airport_small <- null;
+g_aircraft_dump_airport_large <- null;
 
 //////////////////////////////////////////////////////////////////////
 
@@ -145,6 +151,143 @@ function AnyVehicleTypeBuildable()
 	}
 
 	return vt_available;
+}
+
+function GetAirportTypeList_AllowedAndBuildable()
+{
+	local airport_type_list = Airport.GetAirportTypeList(); // Todo: refine airport type selection
+	airport_type_list.Valuate(AIAirport.IsValidAirportType); // can airport be built?
+	airport_type_list.KeepValue(1);
+	//airport_type_list.Valuate(AIAirport.GetNumHangars); // for some reason this don't remove the heliport
+	//airport_type_list.RemoveValue(0);
+	airport_type_list.Valuate(Helper.ItemValuator);
+	airport_type_list.RemoveValue(AIAirport.AT_HELIPORT);
+	airport_type_list.RemoveValue(AIAirport.AT_HELISTATION);
+	airport_type_list.RemoveValue(AIAirport.AT_HELIDEPOT);
+	airport_type_list.RemoveValue(AIAirport.AT_INTERCON); // the intercon has worse performance than international and is larger
+
+	return airport_type_list;
+}
+
+function IsAirportTypeBetterThan(ap_type, other_ap_type)
+{
+	return ap_type > other_ap_type;
+}
+
+function IsGoToAircraftDumpOrder(vehicle_id, order_id)
+{
+	local dest = AIOrder.GetOrderDestination(vehicle_id, order_id);
+	local station_id = AIStation.GetStationID(dest);
+	if(dest != null && (station_id == g_aircraft_dump_airport_small || station_id == g_aircraft_dump_airport_large))
+	{
+		return true;
+	}
+
+	return false;
+}
+function HasVehicleGoToAircraftDumpOrder(vehicle_id)
+{
+	for(local i = 0; i < AIOrder.GetOrderCount(vehicle_id); ++i)
+	{
+		if(IsGoToAircraftDumpOrder(vehicle_id, i))
+			return true;
+	}
+
+	return false;
+}
+
+
+/*
+ * Will return a station id of an airport that has no other purpose
+ * than holding aircrafts while upgrading other airports
+ *
+ * need_large_airport = true or false
+ */
+function GetAircraftDumpAirport(need_large_airport)
+{
+	// if have large, give large
+	if(g_aircraft_dump_airport_large != null && AIStation.IsValidStation(g_aircraft_dump_airport_large))
+		return g_aircraft_dump_airport_large;
+
+	// if have small and small is enough, give small
+	if(!need_large_airport && g_aircraft_dump_airport_small != null && AIStation.IsValidStation(g_aircraft_dump_airport_small))
+		return g_aircraft_dump_airport_small;
+
+
+	// we don't have a dump airport
+	local airport_type_list = GetAirportTypeList_AllowedAndBuildable();
+
+	// Ignore small airports if any large is available or a large one is needed
+	local skip_small = need_large_airport;
+	if(!need_large_airport)
+	{
+		foreach(ap_type in airport_type_list)
+		{
+			if(!Airport.IsSmallAirportType(ap_type))
+			{
+				skip_small = true;
+				break;
+			}
+		}
+	}
+			
+	if(skip_small)
+	{
+		// Don't allow small airport if a large one is needed or available
+		airport_type_list.Valuate(Airport.IsSmallAirportType);
+		airport_type_list.KeepValue(0);
+	}
+
+	// pick cheapest airport that is fulfills the requirements
+	airport_type_list.Valuate(AIAirport.GetPrice); 
+	airport_type_list.Sort(AIList.SORT_BY_VALUE, AIList.SORT_ASCENDING);
+
+	local selected_type = airport_type_list.Begin();
+
+	// Build airport in HQ-town if possible, else in the smallest town
+	local hq_tile = AICompany.GetCompanyHQ(AICompany.COMPANY_SELF);
+	local town = null;
+	local town_list = AITownList();
+	if(AIMap.IsValidTile(hq_tile))
+	{
+		town = AITile.GetClosestTown(hq_tile);
+	}
+	else
+	{
+		town_list.Valuate(AITown.GetPopulation);
+		town_list.Sort(AIList.SORT_BY_VALUE, AIList.SORT_ASCENDING);
+
+		town = town_list.Begin();
+		town_list.RemoveTop(1);
+	}
+
+	local no_cargo = -1;
+	local ap_tile = Airport.BuildAirportInTown(town, selected_type, no_cargo, no_cargo);
+	if(ap_tile == null)
+	{
+		// Fall back to iterating town list if HQ / smallest town failed
+		foreach(town in town_list)
+		{
+			ap_tile = Airport.BuildAirportInTown(town, selected_type, no_cargo, no_cargo);
+			if(ap_tile != null)
+				break;
+		}
+	}
+
+	if(ap_tile != null)
+	{
+		local station_id = AIStation.GetStationID(ap_tile);
+		if(Airport.IsSmallAirportType(selected_type))
+			g_aircraft_dump_airport_small = station_id;
+		else
+			g_aircraft_dump_airport_large = station_id;
+
+		ClueHelper.StoreInStationName(station_id, STATION_SAVE_VERSION + " " + STATION_SAVE_AIRCRAFT_DUMP);
+
+		return station_id;
+	}
+
+	return null;
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -1044,16 +1187,8 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 	local airport_type = null;
 	if(connection.transport_mode == TM_AIR)
 	{
-		local airport_type_list = Airport.GetAirportTypeList(); // Todo: refine airport type selection
-		airport_type_list.Valuate(AIAirport.IsValidAirportType); // can airport be built?
-		airport_type_list.KeepValue(1);
-		//airport_type_list.Valuate(AIAirport.GetNumHangars); // for some reason this don't remove the heliport
-		//airport_type_list.RemoveValue(0);
-		airport_type_list.Valuate(Helper.ItemValuator);
-		airport_type_list.RemoveValue(AIAirport.AT_HELIPORT);
-		airport_type_list.RemoveValue(AIAirport.AT_HELISTATION);
-		airport_type_list.RemoveValue(AIAirport.AT_HELIDEPOT);
-		airport_type_list.RemoveValue(AIAirport.AT_INTERCON); // the intercon has worse performance than international and is larger
+		// Todo: refine airport type selection
+		local airport_type_list = GetAirportTypeList_AllowedAndBuildable(); 
 		foreach(ap, _ in airport_type_list)
 		{
 			Log.Info("ap type : " + ap, Log.LVL_INFO);
@@ -1247,6 +1382,22 @@ function CluelessPlus::ReadConnectionsFromMap()
 	// Destroy all unused stations so they don't cost money
 	foreach(station_id, _ in unused_stations)
 	{
+		// Don't remove the airport dump stations, instead store their station id:s in the global vars for large + small dump airport
+		local save_str = ClueHelper.ReadStrFromStationName(station_id);
+		if(save_str == STATION_SAVE_AIRCRAFT_DUMP)
+		{
+			local ap_tile = Airport.GetAirportTile(station_id);
+			if(ap_tile != null && AIMap.IsValidTile(ap_tile)) // verify that the station has an airport
+			{
+				if(Airport.IsSmallAirport(ap_tile))
+					g_aircraft_dump_airport_small = station_id;
+				else
+					g_aircraft_dump_airport_large = station_id;
+
+				continue;
+			}
+		}
+
 		Log.Warning("Station " + AIStation.GetName(station_id) + " is unused and will be removed", Log.LVL_INFO);
 
 		Station.DemolishStation(station_id);
@@ -1287,6 +1438,11 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 			local station_id = AIStation.GetStationID(AIOrder.GetOrderDestination(vehId, i_order));
 			local stn_tile_list = AITileList_StationType(station_id, station_type); // Resolve a station tile with the right transport mode.
 			local station_tile = stn_tile_list.Begin();
+
+			// Ignore the aircraft dump airport if it is in the orders
+			local save_str = ClueHelper.ReadStrFromStationName(station_id);
+			if(save_str == STATION_SAVE_AIRCRAFT_DUMP)
+				continue;
 
 			if(stn_tile_list.Count() == 0)
 			{
@@ -1429,9 +1585,6 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	// Detect broken connections
 	if(connection.depot.len() != 2 || connection.station.len() != 2 || connection.town.len() != 2)
 		connection.state = Connection.STATE_FAILED;
-
-	Helper.SetSign(connection.station[0], "state: " + connection.state);
-	Helper.SetSign(connection.station[1], "state: " + connection.state);
 
 	// Sleep a while if we are a slow AI
 	if(AIController.GetSetting("slow_ai") == 1)
