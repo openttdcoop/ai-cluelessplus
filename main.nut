@@ -58,6 +58,7 @@ require("stationstatistics.nut");
 require("strategy.nut");
 require("transport_mode_stats.nut");
 require("connection.nut");
+require("timer.nut");
 
 
 STATION_SAVE_VERSION <- "0";
@@ -67,6 +68,50 @@ MIN_VEHICLES_TO_BUILD_NEW <- 5; // minimum number of vehicles left in order to a
 // Airport where aircrafts are "dumped" while airports are upgraded
 g_aircraft_dump_airport_small <- null;
 g_aircraft_dump_airport_large <- null;
+
+//////////////////////////////////////////////////////////////////////
+
+g_timers <- { 
+		manage_vehicles = Timer("manage vehicles"),
+		manage_stations = Timer("manage stations"),
+		manage_state = Timer("manage state"),
+		all_manage = Timer("all manage"),
+		build_check = Timer("build check"),
+		state_build = Timer("state build"),
+		build_pathfinding = Timer("build - pathfinding"),
+		build_buildroad = Timer("build - buildroad"),
+		build_infra_connect = Timer("build - infra connect"),
+		build_buy_vehicles = Timer("build - vehicles"),
+		build_stations = Timer("build - stations"),
+		build_performance = Timer("build - calc performance"),
+		build_abort = Timer("abort building connection"),
+		repair_connection = Timer("repair connection"),
+		rail_crossings = Timer("rail crossings"),
+		scan_depots = Timer("scan depots"),
+		pairfinding = Timer("pair finding"),
+		connect_pair = Timer("connect pair"),
+		handle_events = Timer("handle events"),
+		manage_loan = Timer("manage loan"),
+		all = Timer("all"),
+	};
+
+// table_name is eg. build_check which is a key in the g_timers table
+function StartTimer(table_name)
+{
+	if(AIController.GetSetting("enable_timers") == 1)
+	{
+		g_timers.rawget(table_name).Start();
+	}
+}
+
+function StopTimer(table_name)
+{
+	if(AIController.GetSetting("enable_timers") == 1)
+	{
+		g_timers.rawget(table_name).Stop();
+	}
+}
+
 
 //////////////////////////////////////////////////////////////////////
 
@@ -153,19 +198,39 @@ function AnyVehicleTypeBuildable()
 	return vt_available;
 }
 
-function GetAirportTypeList_AllowedAndBuildable()
+// if avoid_small_airports is true, the result will only contain small airports
+// if there are no large ones.
+function GetAirportTypeList_AllowedAndBuildable(avoid_small_airports = false)
 {
 	local airport_type_list = Airport.GetAirportTypeList(); // Todo: refine airport type selection
 	airport_type_list.Valuate(AIAirport.IsValidAirportType); // can airport be built?
 	airport_type_list.KeepValue(1);
 	//airport_type_list.Valuate(AIAirport.GetNumHangars); // for some reason this don't remove the heliport
 	//airport_type_list.RemoveValue(0);
-	airport_type_list.Valuate(Helper.ItemValuator);
-	airport_type_list.RemoveValue(AIAirport.AT_HELIPORT);
-	airport_type_list.RemoveValue(AIAirport.AT_HELISTATION);
-	airport_type_list.RemoveValue(AIAirport.AT_HELIDEPOT);
-	airport_type_list.RemoveValue(AIAirport.AT_INTERCON); // the intercon has worse performance than international and is larger
+	airport_type_list.RemoveItem(AIAirport.AT_HELIPORT);
+	airport_type_list.RemoveItem(AIAirport.AT_HELISTATION);
+	airport_type_list.RemoveItem(AIAirport.AT_HELIDEPOT);
+	airport_type_list.RemoveItem(AIAirport.AT_INTERCON); // the intercon has worse performance than international and is larger
 
+	if(avoid_small_airports)
+	{
+		local skip_small = false;
+		foreach(ap_type in airport_type_list)
+		{
+			if(!Airport.IsSmallAirportType(ap_type))
+			{
+				skip_small = true;
+				break;
+			}
+		}
+		if(skip_small)
+		{
+			airport_type_list.Valuate(Airport.IsSmallAirportType);
+			airport_type_list.KeepValue(0);
+		}
+	}
+
+	airport_type_list.Valuate(Helper.ItemValuator);
 	return airport_type_list;
 }
 
@@ -224,28 +289,8 @@ function GetAircraftDumpAirport(need_large_airport)
 
 
 	// we don't have a dump airport
-	local airport_type_list = GetAirportTypeList_AllowedAndBuildable();
-
-	// Ignore small airports if any large is available or a large one is needed
-	local skip_small = need_large_airport;
-	if(!need_large_airport)
-	{
-		foreach(ap_type in airport_type_list)
-		{
-			if(!Airport.IsSmallAirportType(ap_type))
-			{
-				skip_small = true;
-				break;
-			}
-		}
-	}
-			
-	if(skip_small)
-	{
-		// Don't allow small airport if a large one is needed or available
-		airport_type_list.Valuate(Airport.IsSmallAirportType);
-		airport_type_list.KeepValue(0);
-	}
+	local avoid_small = need_large_airport;
+	local airport_type_list = GetAirportTypeList_AllowedAndBuildable(avoid_small);
 
 	// pick cheapest airport that is fulfills the requirements
 	airport_type_list.Valuate(AIAirport.GetPrice); 
@@ -366,8 +411,8 @@ class CluelessPlus extends AIController {
 	function RoundLoanDown(loanAmount); // Helper
 	function GetMaxMoney();
 
-	function BuildServiceInTown();
 	function BuyNewConnectionVehicles(connection); 
+	function BuildHQ();
 	// if tile is not a road-tile it will search for closest road-tile and then start searching for a location to place it from there.
 	function PlaceHQ(nearby_tile);
 
@@ -381,6 +426,7 @@ class CluelessPlus extends AIController {
 function CluelessPlus::Start()
 {
 	this.Sleep(1);
+	local last_timer_print = AIDate.GetCurrentDate();
 
 	AIRoad.SetCurrentRoadType(AIRoad.ROADTYPE_ROAD);
 
@@ -425,6 +471,8 @@ function CluelessPlus::Start()
 	local i = 0;
 	while(!this.stop)
 	{
+		TimerStart("all");
+
 		i++;
 		this.Sleep(1);
 
@@ -446,13 +494,15 @@ function CluelessPlus::Start()
 			engine_list.KeepValue(0); 
 */
 
+			TimerStart("build_check");
+
 			// Also only manage our vehicles if we have any.
 			local vehicle_list = AIVehicleList();
 
 			local allow_build_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
 			local allow_build_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW;
 
-			// ... check if we can afford to build some stuff (or we don't have anything -> need to build to either suceed or go bankrupt and restart)
+			// ... check if we can afford to build some stuff (or we don't have anything -> need to build to either succeed or go bankrupt and restart)
 			//   AND road vehicles are not disabled
 			//   AND at least 5 more buses/trucks can be built before reaching the limit (a 1 bus/truck connection will not become good)
 			if((this.GetMaxMoney() > 95000 || AIStationList(AIStation.STATION_ANY).IsEmpty() ) &&
@@ -471,9 +521,14 @@ function CluelessPlus::Start()
 				}
 			}
 
+			TimerStop("build_check");
+			TimerStart("all_manage");
+
 			if(!vehicle_list.IsEmpty() && AnyVehicleTypeBuildable())
 			{
+				TimerStart("scan_depots");
 				this.CheckDepotsForStopedVehicles();
+				TimerStop("scan_depots");
 
 				// check if we should manage the connections
 				local now = AIDate.GetCurrentDate();
@@ -511,11 +566,21 @@ function CluelessPlus::Start()
 						}
 						else
 						{
+							TimerStart("manage_state");
 							connection.ManageState();
-							connection.ManageStations();
-							connection.ManageVehicles();
+							TimerStop("manage_state");
 
+							TimerStart("manage_stations");
+							connection.ManageStations();
+							TimerStop("manage_stations");
+
+							TimerStart("manage_vehicles");
+							connection.ManageVehicles();
+							TimerStop("manage_vehicles");
+
+							TimerStart("scan_depots");
 							this.CheckDepotsForStopedVehicles(); // Sell / upgrade vehicles even while managing connections - good when there are a huge amount of connections
+							TimerStop("scan_depots");
 						}
 					}
 
@@ -526,6 +591,7 @@ function CluelessPlus::Start()
 					}
 
 					// Check for rail crossings that couldn't be fixed just after a crash event
+					TimerStart("rail_crossings");
 					this.detected_rail_crossings.Valuate(Helper.ItemValuator);
 					foreach(crash_tile, _ in this.detected_rail_crossings)
 					{
@@ -552,56 +618,56 @@ function CluelessPlus::Start()
 							this.detected_rail_crossings.RemoveValue(crash_tile);
 						}
 					}
-					
-					
+					TimerStop("rail_crossings");
+
 				}
 			}
+
+			TimerStop("all_manage");
 		}	
 
 		if(state_build)
 		{
+			TimerStart("state_build");
+
 			// Simulate the time it takes to look for a connection
 			if(AIController.GetSetting("slow_ai"))
 				AIController.Sleep(1000); // a bit more than a month
 
+			TimerStart("connect_pair");
 			local ret = this.ConnectPair();
 			state_build = false;
+			TimerStop("connect_pair");
 
 			if(ret && !AIMap.IsValidTile(AICompany.GetCompanyHQ(AICompany.COMPANY_SELF)))
 			{
-				Log.Info("Place HQ", Log.LVL_INFO);
-				// Place the HQ close to the first station
-
-				// connection[0] would be failed if first connection fails but the second succeds
-				// so we must find the first one that did not fail
-				foreach(connection in connection_list)
-				{
-					if(connection.state == Connection.STATE_ACTIVE)
-					{
-						for(local i = 0; i != connection.node.len(); i++)
-						{
-							// Only place the HQ in towns
-							if(connection.node[i].IsTown())
-							{
-								PlaceHQ(connection.station[i]);
-								break;
-							}
-						}
-					}
-
-					// Placing the HQ once is enough :-)
-					if(AIMap.IsValidTile(AICompany.GetCompanyHQ(AICompany.COMPANY_SELF)))
-						break;
-				}
+				this.BuildHQ();
 			}
 			else
 			{
 				Log.Warning("Could not find two towns/industries to connect", Log.LVL_INFO);
 			}
+
+			TimerStop("state_build");
 		}
 
 		// Pay back unused money
 		ManageLoan();
+
+		TimerStop("all");
+
+		// Show timers + restart once a year
+		if(last_timer_print + 365 * 5 < AIDate.GetCurrentDate())
+		{
+			Log.Info("Timer counts:", Log.LVL_DEBUG);
+			foreach(_, timer in g_timers)
+			{
+				timer.PrintTotal();
+				timer.Reset();
+			}
+			Log.Info("------- Timer counts end -------", Log.LVL_DEBUG);
+			last_timer_print = AIDate.GetCurrentDate();
+		}
 	}
 }
 function CluelessPlus::Stop()
@@ -630,12 +696,16 @@ function CluelessPlus::Load(version, data)
 
 function CluelessPlus::HandleEvents()
 {
+	TimerStart("handle_events");
 	if(AIEventController.IsEventWaiting())
 	{
 		local ev = AIEventController.GetNextEvent();
 
 		if(ev == null)
+		{
+			TimerStop("handle_events");
 			return;
+		}
 
 		local ev_type = ev.GetEventType();
 
@@ -765,6 +835,8 @@ function CluelessPlus::HandleEvents()
 			}
 		} // event industry close
 	}
+
+	TimerStop("handle_events");
 }
 
 function CluelessPlus::SendLostVehicleForSelling(vehicle_id)
@@ -934,8 +1006,10 @@ function CluelessPlus::ConnectPair()
 		g_tm_stats[tm].CalcMaxConstructDistance(state_desperateness);
 	}
 
+	TimerStart("pairfinding");
 	local result = this.pair_finder.FindTwoNodesToConnect(state_desperateness, connection_list);
 	local pair = result != null? result.pair : null;
+	TimerStop("pairfinding");
 
 	if(!pair)
 	{
@@ -1009,6 +1083,8 @@ function CluelessPlus::ConnectPair()
 
 	// Connect stations with road/rail/buyos
 
+	TimerStart("build_infra_connect");
+
 	local connected = false;
 	local road_builder = null; // keep the builder alive also after building completed, so that performance can be computed
 	local rail_builder = null;
@@ -1037,8 +1113,14 @@ function CluelessPlus::ConnectPair()
 							local max_loops = 5000;
 							if(connected)
 							{
+								TimerStart("build_pathfinding");
 								road_builder.Init(depot_front_tile, station_front_tile, repair, max_loops); // -> start construct it from the station
+								road_builder.DoPathfinding();
+								TimerStop("build_pathfinding");
+
+								TimerStart("build_buildroad");
 								connected = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED;
+								TimerStop("build_buildroad");
 							}
 						}
 
@@ -1081,11 +1163,13 @@ function CluelessPlus::ConnectPair()
 			NOT_IMPLEMENTED();
 			return false;
 	}
+	TimerStop("build_infra_connect");
 
 
 	// Only buy buses if we actually did connect the two cities.
 	if(connected && !failed)
 	{	
+		TimerStart("build_buy_vehicles");
 		Log.Info("stations are now connected with infrastructure", Log.LVL_INFO);
 		// BuyNewConnectionVehicles save the IDs of the bough buses in the connection data-structure
 		BuyNewConnectionVehicles(connection); 
@@ -1093,10 +1177,12 @@ function CluelessPlus::ConnectPair()
 		Log.Info("bough buses", Log.LVL_INFO);
 
 		connection.state = Connection.STATE_ACTIVE;	// construction did not fail -> active connection
+		TimerStop("build_buy_vehicles");
 	}
 	else
 	{
 		Log.Warning("failed to connect stations with road/rail etc.", Log.LVL_INFO);
+		TimerStart("build_abort");
 
 		for(local i = 0; i < 2; i++)
 		{
@@ -1128,6 +1214,7 @@ function CluelessPlus::ConnectPair()
 
 		connection.state = Connection.STATE_FAILED;			// store that this connection faild so we don't waste our money on buying buses for it.
 		state_desperateness++;
+		TimerStop("build_abort");
 	}
 
 	// Store the connection so we don't build it again.
@@ -1137,6 +1224,7 @@ function CluelessPlus::ConnectPair()
 	// Calculate build performance
 	if(!failed && connected)
 	{
+		TimerStart("build_performance");
 		local performance = 0;
 		switch(connection.transport_mode)
 		{
@@ -1182,9 +1270,43 @@ function CluelessPlus::ConnectPair()
 
 		// we succeed to build the connection => revert to zero desperateness
 		state_desperateness = 0;
+
+		TimerStop("build_performance");
 	}
 
 	return !failed && connected;
+}
+
+function CluelessPlus::BuildHQ()
+{
+	// Check if HQ already has been built
+	if(AIMap.IsValidTile(AICompany.GetCompanyHQ(AICompany.COMPANY_SELF)))
+		return;
+
+	Log.Info("Place HQ", Log.LVL_INFO);
+	// Place the HQ close to the first station
+
+	// connection[0] would be failed if first connection fails but the second succeds
+	// so we must find the first one that did not fail
+	foreach(connection in connection_list)
+	{
+		if(connection.state == Connection.STATE_ACTIVE)
+		{
+			for(local i = 0; i != connection.node.len(); i++)
+			{
+				// Only place the HQ in towns
+				if(connection.node[i].IsTown())
+				{
+					PlaceHQ(connection.station[i]);
+					break;
+				}
+			}
+		}
+
+		// Placing the HQ once is enough :-)
+		if(AIMap.IsValidTile(AICompany.GetCompanyHQ(AICompany.COMPANY_SELF)))
+			break;
+	}
 }
 
 function CluelessPlus::ConstructStationAndDepots(pair, connection)
@@ -1640,6 +1762,8 @@ function CluelessPlus::SetCompanyName(nameArray)
 
 function CluelessPlus::ManageLoan()
 {
+	TimerStart("manage_loan");
+
 	// local constants. ( I've not found how to declare constants in Squirrel yet :( )
 	local balance = AICompany.GetBankBalance(AICompany.COMPANY_SELF);
 	local loan = AICompany.GetLoanAmount();
@@ -1683,6 +1807,8 @@ function CluelessPlus::ManageLoan()
 			
 		//AILog.Info("Successfully paid back loan");
 	}
+
+	TimerStop("manage_loan");
 }
 
 function CluelessPlus::RoundLoanDown(loanAmount)

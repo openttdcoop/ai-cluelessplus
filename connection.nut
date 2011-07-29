@@ -1477,9 +1477,11 @@ function Connection::ManageVehicles()
 				)
 			{
 				// Repair the connection if it is broken
+				g_timers.repair_connection.Start();
 				if(RepairRoadConnection())
 					this.long_time_mean_income = this.long_time_mean_income * 7 / 10; // Fake a reduction of long time mean in order to prevent or make management hell less likely to happen.
 				this.last_repair_route = AIDate.GetCurrentDate();
+				g_timers.repair_connection.Stop();
 			}
 		}
 
