@@ -833,7 +833,29 @@ function CluelessPlus::HandleEvents()
 					connection.CloseConnection();
 				}
 			}
-		} // event industry close
+		} 
+		else if(ev_type == AIEvent.AI_ET_COMPANY_IN_TROUBLE)
+		{
+			local company_in_trouble_event = AIEventCompanyInTrouble.Convert(ev);
+			local company = company_in_trouble_event.GetCompanyID();
+			if(AICompany.IsMine(company))
+			{
+				local num = 0;
+
+				local list = AIVehicleList();
+				while(list.Count() > 0 || num == 0)
+				{
+					list.Valuate(Vehicle.GetProfitThisAndLastYear);
+					list.Sort(AIList.SORT_BY_VALUE, AIList.SORT_ASCENDING);
+					local lowest_profit_vehicle = list.Begin();
+					if(num > 0 && list.GetValue(lowest_profit_vehicle) > 0) break; // don't sell vehicles that make profit if we have sold at least one already
+					list.RemoveItem(lowest_profit_vehicle);
+
+					// Send vehicle for selling without spending time to find out which connection that it belongs to
+					SendLostVehicleForSelling(lowest_profit_vehicle);
+				}
+			}
+		}
 	}
 
 	TimerStop("handle_events");
@@ -1362,7 +1384,10 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 					if (station_tile == null)
 						Log.Warning("failed to build airport in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
 					else
+					{
+						Log.Warning("Built airport in town: " + AITown.GetName(node.town_id), Log.LVL_SUB_DECISIONS);
 						depot_tile = Airport.GetHangarTile(AIStation.GetStationID(station_tile));
+					}
 					break;
 
 				default:
