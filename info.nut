@@ -40,7 +40,7 @@ class FCluelessPlusPlusAI extends AIInfo {
 	function GetAPIVersion()  { return "1.0"; }
 	function GetVersion()     { return 28; }
 	function MinVersionToLoad() { return 1; }
-	function GetDate()        { return "2011-07-29"; }
+	function GetDate()        { return "2011-07-30"; }
 	function GetUrl()         { return "http://junctioneer.net/o-ai/CLUP"; }
 	function UseAsRandomAI()  { return true; }
 	function CreateInstance() { return "CluelessPlus"; }
@@ -53,7 +53,7 @@ class FCluelessPlusPlusAI extends AIInfo {
 		AddSetting({name = "max_num_bus_stops", description = "Maximum number of bus/truck stops per station to build" easy_value = 1, medium_value = 2, hard_value = 4, custom_value = 4, flags = AICONFIG_INGAME, min_value = 1, max_value = 16});
 		AddSetting({name = "log_level", description = "Debug: Log level (higher = print more)", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_INGAME, min_value = 1, max_value = 3});
 		AddSetting({name = "debug_signs", description = "Debug: Build debug signs", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
-		AddSetting({name = "enable_timers", description = "Debug: Clock AI performance (can't be changed in-game)", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_AI_DEVELOPER });
+		AddSetting({name = "enable_timers", description = "Debug: Clock AI performance (can't be changed in-game)", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN });
 
 		AddLabels("connection_types", {_0 = "Connect towns only", _1 = "Connect industries only", _2 = "Connect both towns and industries" } );
 	}

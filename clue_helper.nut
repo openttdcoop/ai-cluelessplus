@@ -279,7 +279,7 @@ function ClueHelper::StoreInObjectName(obj_id, obj_api_class, str)
 
 		if(i > 9000)
 		{
-			AILog.Error("Failed to give name to object 9000 times");
+			AILog.Error("Failed to give name to object 9000 times. Obj name: " + str);
 			return false;
 		}
 	}

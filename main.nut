@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 10);
+import("util.superlib", "SuperLib", 11);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -69,6 +69,8 @@ MIN_VEHICLES_TO_BUILD_NEW <- 5; // minimum number of vehicles left in order to a
 g_aircraft_dump_airport_small <- null;
 g_aircraft_dump_airport_large <- null;
 
+g_num_connection_airport_upgrade <- 0;
+
 //////////////////////////////////////////////////////////////////////
 
 g_timers <- { 
@@ -96,7 +98,7 @@ g_timers <- {
 	};
 
 // table_name is eg. build_check which is a key in the g_timers table
-function StartTimer(table_name)
+function TimerStart(table_name)
 {
 	if(AIController.GetSetting("enable_timers") == 1)
 	{
@@ -104,7 +106,7 @@ function StartTimer(table_name)
 	}
 }
 
-function StopTimer(table_name)
+function TimerStop(table_name)
 {
 	if(AIController.GetSetting("enable_timers") == 1)
 	{
@@ -114,6 +116,17 @@ function StopTimer(table_name)
 
 
 //////////////////////////////////////////////////////////////////////
+
+function GetAvailableTransportModes(min_vehicles_left = 1)
+{
+	local tm_list = [];
+	if(Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= min_vehicles_left)
+		tm_list.append(TM_AIR);
+	if(Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= min_vehicles_left)
+		tm_list.append(TM_ROAD);
+
+	return tm_list;
+}
 
 function GetVehiclesWithoutOrders()
 {
@@ -292,6 +305,16 @@ function GetAircraftDumpAirport(need_large_airport)
 	local avoid_small = need_large_airport;
 	local airport_type_list = GetAirportTypeList_AllowedAndBuildable(avoid_small);
 
+	// Use a small airport if possible (no large is needed and a small is available)
+	if(!need_large_airport)
+	{
+		airport_type_list.Valuate(Airport.IsSmallAirportType);
+		if(Helper.GetListMinValue(airport_type_list) == 0) // have small airport?
+		{
+			airport_type_list.KeepValue(0); // keep only small airports
+		}
+	}
+
 	// pick cheapest airport that is fulfills the requirements
 	airport_type_list.Valuate(AIAirport.GetPrice); 
 	airport_type_list.Sort(AIList.SORT_BY_VALUE, AIList.SORT_ASCENDING);
@@ -325,6 +348,9 @@ function GetAircraftDumpAirport(need_large_airport)
 			ap_tile = Airport.BuildAirportInTown(town, selected_type, no_cargo, no_cargo);
 			if(ap_tile != null)
 				break;
+
+			if(AIError.GetLastError() == AIError.ERR_NOT_ENOUGH_CASH)
+				break;
 		}
 	}
 
@@ -342,6 +368,32 @@ function GetAircraftDumpAirport(need_large_airport)
 	}
 
 	return null;
+}
+
+function CheckIfDumpStationsAreUnused()
+{
+	if(g_num_connection_airport_upgrade > 0) return;
+
+	// Don't remove unused dump stations if we are rich
+	if(AICompany.GetBankBalance(AICompany.COMPANY_SELF) > AICompany.GetMaxLoanAmount() * 1.5) return;
+
+	if(g_aircraft_dump_airport_small != null && AIVehicleList_Station(g_aircraft_dump_airport_small).IsEmpty())
+	{
+		// Remove unused dump station
+		if(AITile.DemolishTile(Airport.GetAirportTile(g_aircraft_dump_airport_small)))
+		{
+			g_aircraft_dump_airport_small = null;
+		}
+	}
+
+	if(g_aircraft_dump_airport_large != null && AIVehicleList_Station(g_aircraft_dump_airport_large).IsEmpty())
+	{
+		// Remove unused dump station
+		if(AITile.DemolishTile(Airport.GetAirportTile(g_aircraft_dump_airport_large)))
+		{
+			g_aircraft_dump_airport_large = null;
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -399,6 +451,8 @@ class CluelessPlus extends AIController {
 	function HandleEvents();
 	function SendLostVehicleForSelling(vehicle_id);
 	function CheckDepotsForStopedVehicles();
+	function GetNewPairMoneyLimitPerTransportMode();
+	function GetNewPairMoneyLimit();
 	function ConnectPair();
 
 	function Save();
@@ -454,7 +508,11 @@ function CluelessPlus::Start()
 	{
 		Log.Info("Map loaded => Read connections from the map ...", Log.LVL_INFO);
 		ReadConnectionsFromMap();
+		Log.Info("", Log.LVL_INFO);
 		Log.Info("All connections have been read from the map", Log.LVL_INFO);
+		Log.Info("----------------------------------------------------------------------", Log.LVL_INFO);
+		Log.Info("", Log.LVL_INFO);
+		Log.Info("", Log.LVL_INFO);
 	}
 
 	if(!AnyVehicleTypeBuildable())
@@ -467,6 +525,7 @@ function CluelessPlus::Start()
 	state_build = false;
 	local last_manage_time = AIDate.GetCurrentDate();
 	local not_build_info_printed = false;
+	local last_yearly_manage = AIDate.GetCurrentDate();
 
 	local i = 0;
 	while(!this.stop)
@@ -502,10 +561,12 @@ function CluelessPlus::Start()
 			local allow_build_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
 			local allow_build_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW;
 
+			local money_limit = this.GetNewPairMoneyLimit();
+
 			// ... check if we can afford to build some stuff (or we don't have anything -> need to build to either succeed or go bankrupt and restart)
 			//   AND road vehicles are not disabled
 			//   AND at least 5 more buses/trucks can be built before reaching the limit (a 1 bus/truck connection will not become good)
-			if((this.GetMaxMoney() > 95000 || AIStationList(AIStation.STATION_ANY).IsEmpty() ) &&
+			if((this.GetMaxMoney() > money_limit || AIStationList(AIStation.STATION_ANY).IsEmpty() ) &&
 					AnyVehicleTypeBuildable() &&
 					(allow_build_road || allow_build_air) )
 			{
@@ -566,6 +627,8 @@ function CluelessPlus::Start()
 						}
 						else
 						{
+							local old_balance = Money.MaxLoan();
+
 							TimerStart("manage_state");
 							connection.ManageState();
 							TimerStop("manage_state");
@@ -581,6 +644,8 @@ function CluelessPlus::Start()
 							TimerStart("scan_depots");
 							this.CheckDepotsForStopedVehicles(); // Sell / upgrade vehicles even while managing connections - good when there are a huge amount of connections
 							TimerStop("scan_depots");
+
+							Money.RestoreLoan(old_balance);
 						}
 					}
 
@@ -653,6 +718,19 @@ function CluelessPlus::Start()
 
 		// Pay back unused money
 		ManageLoan();
+
+		// Yearly management
+		if(last_yearly_manage + 365 < AIDate.GetCurrentDate())
+		{
+			Log.Info("Yearly manage", Log.LVL_INFO);
+
+			// Check if we have any unused aircraft dump stations (that can be removed to save money) 
+			//CheckIfDumpStationsAreUnused();
+
+			// wait a year for next yearly manage
+			last_yearly_manage = AIDate.GetCurrentDate();
+			Log.Info("Yearly manage - done", Log.LVL_INFO);
+		}
 
 		TimerStop("all");
 
@@ -854,7 +932,18 @@ function CluelessPlus::HandleEvents()
 					// Send vehicle for selling without spending time to find out which connection that it belongs to
 					SendLostVehicleForSelling(lowest_profit_vehicle);
 				}
-			}
+
+				foreach(connection in this.connection_list)
+				{
+					if(connection.transport_mode == TM_AIR)
+					{
+						// don't upgrade airports when in economic trouble
+						connection.StopAirportUpgrading();
+					}
+				}
+
+			} // Is mine company
+
 		}
 	}
 
@@ -1018,6 +1107,56 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 	}
 }
 
+function CluelessPlus::GetNewPairMoneyLimit()
+{
+	local limits = this.GetNewPairMoneyLimitPerTransportMode();
+	local min_limit = null;
+	foreach(item in limits)
+	{
+		if(min_limit == null || item.limit < min_limit)
+			min_limit = item.limit;
+	}
+
+	if(min_limit == null) min_limit = 95000;
+	min_limit = Helper.Max(95000, min_limit); // require at least 95000 even if some transport mode is cheaper
+
+	return min_limit;
+}
+
+function CluelessPlus::GetNewPairMoneyLimitPerTransportMode()
+{
+	local tm_list = GetAvailableTransportModes(MIN_VEHICLES_TO_BUILD_NEW);
+
+	// Make sure there are at least one transport mode
+	if(tm_list.len() == 0)
+		return 95000;
+
+	local tm_money_limits = [];
+	foreach(tm in tm_list)
+	{
+		local item = { tm = tm, limit = 95000 };	
+
+		if(tm == TM_AIR)
+		{
+			local airport_type_list = GetAirportTypeList_AllowedAndBuildable();
+
+			airport_type_list.Valuate(AIAirport.GetPrice);
+			airport_type_list.Sort(AIList.SORT_BY_VALUE, AIList.SORT_DESCENDING);
+			local ap_type = airport_type_list.Begin();
+			local airport_cost = airport_type_list.GetValue(ap_type) * 2;
+
+			local engine = Strategy.FindEngineModelToPlanFor(Helper.GetPAXCargo(), AIVehicle.VT_AIR, Airport.IsSmallAirport(ap_type));
+			local engine_cost = AIEngine.GetPrice(engine);
+
+			item.limit = (airport_cost + engine_cost) * 12 / 10; // 20 % margin
+		}
+
+		tm_money_limits.append(item);
+	}
+
+	return tm_money_limits;
+}
+
 function CluelessPlus::ConnectPair()
 {
 	// scan for two pairs to connect
@@ -1075,7 +1214,7 @@ function CluelessPlus::ConnectPair()
 
 	// We don't want to worry about budgeting exactly how much money that is needed, get as much money as possible.
 	// We can always pay back later. 
-	AICompany.SetLoanAmount(AICompany.GetMaxLoanAmount());
+	local old_balance = Money.MaxLoan();
 
 
 	//// Start building ////
@@ -1087,6 +1226,7 @@ function CluelessPlus::ConnectPair()
 		connection.state = Connection.STATE_FAILED;			// store that this connection faild so we don't waste our money on buying buses for it.
 		connection_list.append(connection); 
 		this.state_desperateness++;
+		Money.RestoreLoan(old_balance);
 		return false;
 	}
 
@@ -1296,6 +1436,8 @@ function CluelessPlus::ConnectPair()
 		TimerStop("build_performance");
 	}
 
+	Money.RestoreLoan(old_balance);
+
 	return !failed && connected;
 }
 
@@ -1340,13 +1482,37 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 	local airport_type = null;
 	if(connection.transport_mode == TM_AIR)
 	{
-		// Todo: refine airport type selection
-		local airport_type_list = GetAirportTypeList_AllowedAndBuildable(); 
-		foreach(ap, _ in airport_type_list)
+		// Select an airport that can be afforded after reserving* money for one aircraft   * = no actual reservation is made. Only accounting for the engine is done.
+
+		local large_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, false);
+		local large_engine_cost = AIEngine.GetPrice(large_engine);
+
+		// can afford large airport + large airplane?
+		local airport_type_list = GetAirportTypeList_AllowedAndBuildable(false);
+		airport_type_list.Valuate(AIAirport.GetPrice);
+		airport_type_list.KeepBelowValue(AICompany.GetBankBalance(AICompany.COMPANY_SELF) - large_engine_cost * 12 / 10);
+
+		if(airport_type_list.IsEmpty())
 		{
-			Log.Info("ap type : " + ap, Log.LVL_INFO);
+			// couldn't afford large airport + large engine.
+			// try small airport
+
+			local small_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, true);
+			local small_engine_cost = AIEngine.GetPrice(small_engine);
+
+			airport_type_list = GetAirportTypeList_AllowedAndBuildable(true);
+			airport_type_list.Valuate(AIAirport.GetPrice);
+			airport_type_list.KeepBelowValue(AICompany.GetBankBalance(AICompany.COMPANY_SELF) - small_engine_cost * 12 / 10);
 		}
-		airport_type = airport_type_list.Begin();
+
+		airport_type_list.Sort(AIList.SORT_BY_ITEM, AIList.SORT_DESCENDING);
+		airport_type = airport_type_list.Begin(); // take last airport type that can be afforded
+
+		if(airport_type == null)
+		{
+			Log.Warning("Tried to connect pair by air, but there is not enough money to afford an airport + engine", Log.LVL_INFO);
+			return false;
+		}
 	}
 
 	foreach(node in pair)
@@ -1496,12 +1662,29 @@ function CluelessPlus::ReadConnectionsFromMap()
 	//uncategorized_vehicles.Valuate(CargoOfVehicleValuator);
 	//uncategorized_vehicles.KeepValue(Helper.GetPAXCargo());
 
-	local unused_bus_stations = AIStationList(AIStation.STATION_BUS_STOP);
-	local unused_truck_stations = AIStationList(AIStation.STATION_TRUCK_STOP);
-	local unused_stations = AIList();
-	unused_stations.AddList(unused_bus_stations);
-	unused_stations.AddList(unused_truck_stations);
+	local unused_stations = AIStationList(AIStation.STATION_ANY);
 	unused_stations.Valuate(Helper.ItemValuator);
+
+	// Are there any special stations?
+	foreach(station_id, _ in unused_stations)
+	{
+		if(IsAircraftDumpStation(station_id))
+		{
+			Log.Info("Found aircraft dump station: " + AIStation.GetName(station_id), Log.LVL_INFO);
+			local ap_tile = Airport.GetAirportTile(station_id);
+			if(ap_tile != null && AIMap.IsValidTile(ap_tile)) // verify that the station has an airport
+			{
+				if(Airport.IsSmallAirport(ap_tile))
+					g_aircraft_dump_airport_small = station_id;
+				else
+					g_aircraft_dump_airport_large = station_id;
+
+				Log.Info("is small airport = " + Airport.IsSmallAirport(ap_tile), Log.LVL_DEBUG);
+
+				unused_stations.RemoveItem(station_id);
+			}
+		}
+	}
 
 	while(uncategorized_vehicles.Count() > 0)
 	{
@@ -1535,22 +1718,15 @@ function CluelessPlus::ReadConnectionsFromMap()
 		}
 	}
 
+	Log.Info("Num unused stations: " + unused_stations.Count(), Log.LVL_DEBUG);
+
 	// Destroy all unused stations so they don't cost money
 	foreach(station_id, _ in unused_stations)
 	{
-		// Don't remove the airport dump stations, instead store their station id:s in the global vars for large + small dump airport
+		// Don't remove the airport dump stations
 		if(IsAircraftDumpStation(station_id))
 		{
-			local ap_tile = Airport.GetAirportTile(station_id);
-			if(ap_tile != null && AIMap.IsValidTile(ap_tile)) // verify that the station has an airport
-			{
-				if(Airport.IsSmallAirport(ap_tile))
-					g_aircraft_dump_airport_small = station_id;
-				else
-					g_aircraft_dump_airport_large = station_id;
-
-				continue;
-			}
+			continue;
 		}
 
 		Log.Warning("Station " + AIStation.GetName(station_id) + " is unused and will be removed", Log.LVL_INFO);
@@ -1752,6 +1928,12 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	// Detect broken connections
 	if(connection.depot.len() != 2 || connection.station.len() != 2 || connection.town.len() != 2)
 		connection.state = Connection.STATE_FAILED;
+
+	if(connection.state == Connection.STATE_AIRPORT_UPGRADE)
+	{
+		// update variable that keeps track of how many connections that upgrade airports
+		++g_num_connection_airport_upgrade
+	}
 
 	Log.Info("Connection state after fail-check: " + connection.state, Log.LVL_DEBUG);
 

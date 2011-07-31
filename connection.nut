@@ -97,6 +97,7 @@ class Connection
 
 	function IsTownOnly();
 	function HasSmallAirport();
+	function GetSmallAirportCount();
 	function GetTotalPoputaltion();
 	function GetTotalDistance(); // only implemented for 2 towns
 	function ManageState()
@@ -106,6 +107,7 @@ class Connection
 	function GetMinMaxRatingWaiting();
 
 	function ManageAirports();
+	function CheckForAirportUpgrade();
 	function TryUpgradeAirports();
 
 	function FindEngineModelToBuy();
@@ -281,11 +283,30 @@ function Connection::HasSmallAirport()
 
 	foreach(station_tile in this.station)
 	{
+		if(station_tile == null) continue;
+
 		if(Airport.IsSmallAirport(AIStation.GetStationID(station_tile)))
 			return true;
 	}
 
 	return false;
+}
+
+function Connection::GetSmallAirportCount()
+{
+	if(this.transport_mode != TM_AIR)
+		return 0;
+
+	local count = 0;
+	foreach(station_tile in this.station)
+	{
+		if(station_tile == null) continue;
+
+		if(Airport.IsSmallAirport(AIStation.GetStationID(station_tile)))
+			++count;
+	}
+
+	return count;
 }
 
 function Connection::GetTotalPoputaltion()
@@ -315,13 +336,14 @@ function Connection::FindEngineModelToBuy()
 }
 function Connection::BuyVehicles(num_vehicles, engine_id)
 {
-	if(station.len() != 2)
+
+	if(station.len() != 2 || this.station[0] == null || this.station[1] == null)
 	{
 		Log.Warning("BuyVehicles: wrong number of stations", Log.LVL_INFO);
 		return false;
 	}
 
-	if(depot.len() != 2)
+	if(depot.len() != 2 || this.depot[0] == null || this.depot[1] == null)
 	{
 		Log.Warning("BuyVehicles: wrong number of depots", Log.LVL_INFO);
 		return false;
@@ -396,9 +418,6 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 
 				if(!AIMap.IsValidTile(dep))
 					Log.Warning("Depot is invalid tile!", Log.LVL_INFO);
-
-				if(!AIRoad.IsRoadDepotTile(dep))
-					Log.Warning("No depot!", Log.LVL_INFO);
 
 				if(!AIEngine.IsValidEngine(engine_id))
 					Log.Warning("Invalid engine!", Log.LVL_INFO);
@@ -706,6 +725,8 @@ function Connection::ManageState()
 			// Demolish stations
 			foreach(station_tile in this.station)
 			{
+				if(station_tile == null) continue;
+
 				Helper.SetSign(station_tile, "close conn");
 
 				local station_id = AIStation.GetStationID(station_tile);
@@ -720,6 +741,8 @@ function Connection::ManageState()
 			// Demolish depots
 			foreach(depot in this.depot)
 			{
+				if(depot == null) continue;
+
 				Helper.SetSign(depot, "close conn");
 				local front = AIRoad.GetRoadDepotFrontTile(depot);
 
@@ -798,6 +821,7 @@ function Connection::ManageState()
 	else if(this.state == Connection.STATE_AIRPORT_UPGRADE)
 	{
 		// Try to get further in the upgrade process
+		Log.Info("Manage state - try to continue upgrading the airports", Log.LVL_SUB_DECISIONS);
 		this.TryUpgradeAirports();
 	}
 }
@@ -806,6 +830,12 @@ function Connection::ManageStations()
 {
 	if(this.state != Connection.STATE_ACTIVE)
 		return;
+
+	if(this.station[0] == null || this.station[1] == null)
+	{
+		this.CloseConnection();
+		return;
+	}
 
 	// Don't manage too often
 	local now = AIDate.GetCurrentDate();
@@ -870,6 +900,7 @@ function Connection::ManageStations()
 	if(this.transport_mode == TM_AIR)
 	{
 		this.ManageAirports();
+		if(this.station[0] == null || this.station[1] == null) return; // may happen if airport upgrade fails with a broken connection
 	}
 	else if(this.transport_mode == TM_ROAD)
 	{
@@ -1028,8 +1059,27 @@ function Connection::ManageStations()
 
 function Connection::ManageAirports()
 {
-	if(last_airport_upgrade_fail == null || last_airport_upgrade_fail + 365 < AIDate.GetCurrentDate()) // fail at maximum once a year
+	this.CheckForAirportUpgrade();
+}
+
+function Connection::CheckForAirportUpgrade()
+{
+	if( (g_num_connection_airport_upgrade != 0 || g_num_connection_airport_upgrade < this.clueless_instance.connection_list.len() / 2) && // don't upgrade too many at the same time
+			(last_airport_upgrade_fail == null || last_airport_upgrade_fail + 365 < AIDate.GetCurrentDate())) // fail at maximum once a year
 	{
+		Log.Info("ManageAirports", Log.LVL_DEBUG);
+
+		// Does all towns forbid station-building?
+		local all_forbid = true;
+		foreach(node in this.node)
+		{
+			if(Town.TownRatingAllowStationBuilding(node.GetClosestTown()))
+				all_forbid = false;
+		}
+
+		if(all_forbid)
+			return;
+
 		// Check if upgrading of airport is needed
 		local upgrade_need = 0;
 
@@ -1038,7 +1088,8 @@ function Connection::ManageAirports()
 		local max_rating = tmp.max_rating;
 		local max_waiting = tmp.max_waiting;
 
-		local has_small = this.HasSmallAirport();
+		local small_count = this.GetSmallAirportCount();
+		local has_small = small_count > 0;
 
 		upgrade_need += max_waiting / 10 + (has_small? 50 : 0);
 
@@ -1068,14 +1119,26 @@ function Connection::ManageAirports()
 
 					if(best_score > curr_score * 1.5) // higher treshold than when mass-upgrading vehicles
 					{
-						// Upgrade as there is a 
-						upgrade_need = 1000;
+						// Upgrade as there is a significantly better engine available
+						if(AICompany.GetBankBalance(AICompany.COMPANY_SELF) > AICompany.GetMaxLoanAmount() * 15 / 10) // if rich, upgrade quick
+							upgrade_need += 1000;
+						else
+							// else, give a smaller bonus to reduce the risk of trying to upgrade all 
+							// connections at the same time. (20 in bonus if both are small and 50 
+							// in bonus if only one airport is missing before the connection get all
+							// airports large
+							upgrade_need += 20 + (small_count == 1? 30 : 0); 
 					}
 				}
 			}
 		}
 
 		Log.Info("Upgrade need for " + this.GetName() + " is " + upgrade_need, Log.LVL_SUB_DECISIONS);
+		foreach(stn in this.station)
+		{
+			if(stn != null)
+				Helper.SetSign(Tile.GetTileRelative(AIStation.GetLocation(AIStation.GetStationID(stn)), 0, 2), "un:" + upgrade_need);
+		}
 
 		if(upgrade_need > 200)
 		{
@@ -1089,20 +1152,32 @@ function Connection::ManageAirports()
 				// Don't allow "upgrading" to a small airport, if all airports are large.
 				airport_type_list.Valuate(Airport.IsSmallAirportType);
 				airport_type_list.KeepValue(0);
-
-				airport_type_list.Valuate(Helper.ItemValuator); // sort by item again
 			}
+
+			airport_type_list.Valuate(AIAirport.GetPrice);
+			airport_type_list.KeepBelowValue(AICompany.GetBankBalance(AICompany.COMPANY_SELF) - (2 + (small_count == 1? -1 : 0) + g_num_connection_airport_upgrade * 2) * 3); // can afford airport?  (last * 3 is to be extra sure to have the money also when aircrafts have been moved away to the dump airport)
+
+			airport_type_list.Valuate(Helper.ItemValuator); // sort by item again
 			if(airport_type_list.IsEmpty())
+			{
 				Log.Warning("There are no airports to upgrade to for " + this.GetName(), Log.LVL_SUB_DECISIONS);
-			local best_ap_type = airport_type_list.Begin();
+				return;
+			}
 
 			local upgrade_list = [];
 			local i = 0;
 			foreach(station_tile in this.station)
 			{
+				if(station_tile == null) {
+					++i;
+					continue;
+				}
+
 				local town_id = this.node[i].GetClosestTown();
 				if(!Town.TownRatingAllowStationBuilding(town_id)) // Skip towns with too low town rating
 				{
+					Log.Info("Town has too low town rating " + AITown.GetName(this.node[i].GetClosestTown()), Log.LVL_INFO);
+					++i;
 					continue;
 				}
 
@@ -1116,8 +1191,12 @@ function Connection::ManageAirports()
 						continue;
 
 					// Noise constraints?
-					if(AIAirport.GetNoiseLevelIncrease(station_tile, ap_type) - 3 > noise_budget) // allow airports to go at maximum 3 over budget, to allow for new airports to be placed further away
+					local budget_overrun = AIGameSetting.GetValue("station_noise_level") == 1? 3 : 0; // allow airports to go at maximum 3 over noise budget, to allow for new airports to be placed further away. 
+					if(AIAirport.GetNoiseLevelIncrease(station_tile, ap_type) - budget_overrun > noise_budget) 
+					{
+						Log.Info("Airport type to noisy for " + this.node[i].GetName(), Log.LVL_INFO);
 						continue;
+					}
 
 					if(IsAirportTypeBetterThan(ap_type, curr_ap_type))
 					{
@@ -1137,6 +1216,10 @@ function Connection::ManageAirports()
 
 					upgrade_list.append(upgrade);
 				}
+				else
+				{
+					Log.Info("No better airport type was found for " + this.node[i].GetName(), Log.LVL_INFO);
+				}
 
 				++i;
 			}
@@ -1151,6 +1234,7 @@ function Connection::ManageAirports()
 				this.airport_upgrade_list = upgrade_list;
 				this.airport_upgrade_failed = false;
 				this.airport_upgrade_start = AIDate.GetCurrentDate();
+				++g_num_connection_airport_upgrade;
 
 				// store airport upgrading state
 				this.SetState(Connection.STATE_AIRPORT_UPGRADE);
@@ -1164,13 +1248,6 @@ function Connection::ManageAirports()
 				this.TryUpgradeAirports();
 			}
 		}
-		else
-		{
-			foreach(stn in this.station)
-			{
-				Helper.SetSign(Tile.GetTileRelative(AIStation.GetLocation(AIStation.GetStationID(stn)), 0, 2), "un:" + upgrade_need);
-			}
-		}
 	}
 }
 
@@ -1182,12 +1259,17 @@ function Connection::TryUpgradeAirports()
 		return false;
 	}
 
+	if(this.station[0] == null || this.station[1] == null)
+		return false;
+
 	// Abort upgrading if there are no upgrade instructions (eg. when loading a game with a connection in upgrade state)
 	if(this.airport_upgrade_list == null || this.airport_upgrade_list.len() == 0)
 	{
 		this.StopAirportUpgrading();
 		return;
 	}
+
+	Log.Info("Try to upgrade airports of connection " + this.GetName(), Log.LVL_INFO);
 
 	// Get an airport where we can dump the aircrafts while upgrading airports
 	local dump_airport = GetAircraftDumpAirport(!this.HasSmallAirport());
@@ -1203,127 +1285,154 @@ function Connection::TryUpgradeAirports()
 	local veh_list = this.GetVehicles();
 	foreach(veh, _ in veh_list)
 	{
-		ClueHelper.StoreInVehicleName(veh, "ap upgrade");
+		if(ClueHelper.ReadStrFromVehicleName(veh) != "ap upgrade")
+		{
+			ClueHelper.StoreInVehicleName(veh, "ap upgrade");
+		}
 	}
 
-	// Check if there are airports left to upgrade
-	if(this.airport_upgrade_list != null && this.airport_upgrade_list.len() > 0)
+	// Check if vehicles need to be sent to the dump airport
+	if(!veh_list.IsEmpty())
 	{
-		// Check if vehicles need to be sent to the dump airport
-		if(!veh_list.IsEmpty())
+		// Add order to go to the dump airport at the end of order list (if it does not already exist)
+		local vehicle_id = veh_list.Begin();
+		Log.Info("Modifying order of: " + AIVehicle.GetName(vehicle_id), Log.LVL_DEBUG);
+		if(!HasVehicleGoToAircraftDumpOrder(vehicle_id))
 		{
-			// Add order to go to the dump airport at the end of order list (if it does not already exist)
-			local vehicle_id = veh_list.Begin();
-			Log.Info("Modifying order of: " + AIVehicle.GetName(vehicle_id), Log.LVL_DEBUG);
-			if(!HasVehicleGoToAircraftDumpOrder(vehicle_id))
+			AIOrder.AppendOrder(vehicle_id, Airport.GetHangarTile(dump_airport), AIOrder.AIOF_STOP_IN_DEPOT);
+		}
+		else
+			Log.Info("aircraft " + AIVehicle.GetName(vehicle_id) + " already has dump order", Log.LVL_DEBUG);
+
+		// Send all aircrafts to dump airport
+		foreach(veh, _ in veh_list)
+		{
+			Log.Info("skip order of " + AIVehicle.GetName(veh), Log.LVL_DEBUG);
+			AIOrder.SkipToOrder(veh, AIOrder.GetOrderCount(veh) - 1);
+		}
+	}
+	else
+	{
+		Log.Warning("Connection has no vehicles", Log.LVL_DEBUG);
+	}
+
+
+	// Go through upgrade list and see if any airport can be upgraded
+	local done_airports = [];
+	for(local i = 0; i < this.airport_upgrade_list.len(); ++i)
+	{
+		local upgrade = this.airport_upgrade_list[i];
+		local station_id = AIStation.GetStationID(upgrade.airport_tile);
+
+		// Check if there are aircrafts in the way
+		{
+			local tm = AITestMode();
+			if(Airport.GetNumAircraftsInAirportQueue(station_id, false) > 0 ||  // wait for empty holding queue
+					!AITile.DemolishTile(upgrade.airport_tile))       // wait until airport is clear of airplanes
 			{
-				AIOrder.AppendOrder(vehicle_id, Airport.GetHangarTile(dump_airport), AIOrder.AIOF_STOP_IN_DEPOT);
+				continue; // skip upgrading this airport for now
+			}
+		}
+
+		// Airport is ready to be upgraded
+		Log.Info("Do upgrade airport", Log.LVL_DEBUG);
+
+		// Make sure the new airport accept/produce the wanted cargo
+		local accept_cargo = -1;
+		local produce_cargo = -1;
+		if(upgrade.node.IsCargoAccepted())
+			accept_cargo = upgrade.node.cargo_id;
+		if(upgrade.node.IsCargoProduced())
+			produce_cargo = upgrade.node.cargo_id;
+
+		local station_id = AIStation.GetStationID(upgrade.airport_tile);
+		local result = Airport.UpgradeAirportInTown(upgrade.node.GetClosestTown(), station_id, upgrade.to_type_list, accept_cargo, produce_cargo);
+		if(Result.IsSuccess(result))
+		{
+			// Update station tile
+			local new_station_tile = AIStation.GetLocation(station_id);
+			local new_hangar_tile = Airport.GetHangarTile(station_id);
+			this.station[upgrade.index] = new_station_tile;
+			this.depot[upgrade.index] = new_hangar_tile;
+
+			done_airports.append(i);
+			Log.Info("Airport has been upgraded", Log.LVL_INFO);
+		}
+		else 
+		{
+			this.airport_upgrade_failed = true;
+			this.last_airport_upgrade_fail = AIDate.GetCurrentDate();
+
+			if(result == Result.REBUILD_FAILED)
+			{
+				this.station[upgrade.index] = null;
+				this.depot[upgrade.index] = null;
+
+				// old airport was removed, but couldn't be rebuilt => close connection
+				Log.Error("Tried to upgrade airport, but something went wrong after the old airport was removed and", Log.LVL_INFO);
+				Log.Error("a new airport of the old type couldn't be built. The connection will be closed down.", Log.LVL_INFO);
+				this.CloseConnection();
+				return;
+			}
+			else if(result == Result.MONEY_TOO_LOW)
+			{
+				Log.Info("Tried to upgrade airport, money was too low => stop upgrading", Log.LVL_INFO);
+				this.StopAirportUpgrading();
+				return;
+			}
+			else if(result == Result.TOWN_RATING_TOO_LOW)
+			{
+				Log.Info("Tried to upgrade airport, town rating was too low => don't try this airport more", Log.LVL_INFO);
+				done_airports.append(i);
+			}
+			else if(result == Result.TOWN_NOISE_ACCEPTANCE_TOO_LOW)
+			{
+				Log.Info("Tried to upgrade airport, town noise acceptance was too low => don't try this airport more", Log.LVL_INFO);
+				done_airports.append(i);
 			}
 			else
-				Log.Info("aircraft " + AIVehicle.GetName(vehicle_id) + " already has dump order", Log.LVL_DEBUG);
-
-			// Send all aircrafts to dump airport
-			foreach(veh, _ in veh_list)
 			{
-				Log.Info("skip order of " + AIVehicle.GetName(veh), Log.LVL_DEBUG);
-				AIOrder.SkipToOrder(veh, AIOrder.GetOrderCount(veh) - 1);
+				Log.Info("Tried to upgrade airport, but failed due to other error", Log.LVL_INFO);
 			}
+		}
+	}
+
+	// How much have been done?
+	if(done_airports.len() > 0) // at least one airport is done
+	{
+		if(done_airports.len() == this.airport_upgrade_list.len()) // all airports are done
+		{
+			this.airport_upgrade_list = null;
+
+			// Set state back to active
+			this.StopAirportUpgrading();
 		}
 		else
 		{
-			Log.Warning("Connection has no vehicles", Log.LVL_DEBUG);
-		}
+			// at least one airport has been upgraded, but not all.
 
-
-		// Go through upgrade list and see if any airport can be upgraded
-		local done_airports = [];
-		for(local i = 0; i < this.airport_upgrade_list.len(); ++i)
-		{
-			local upgrade = this.airport_upgrade_list[i];
-			local station_id = AIStation.GetStationID(upgrade.airport_tile);
-
-			// Check if there are aircrafts in the way
+			// remove the done airports from this.airport_upgrade_list so that it will not be upgraded again
+			for(local i = done_airports.len() -1; i >= 0; --i)
 			{
-				local tm = AITestMode();
-				if(Airport.GetNumAircraftsInAirportQueue(station_id, false) > 0 ||  // wait for empty holding queue
-						!AITile.DemolishTile(upgrade.airport_tile))       // wait until airport is clear of airplanes
-				{
-					continue; // skip upgrading this airport for now
-				}
-			}
-
-			// Airport is ready to be upgraded
-			Log.Info("Do upgrade airport", Log.LVL_DEBUG);
-
-			// Make sure the new airport accept/produce the wanted cargo
-			local accept_cargo = -1;
-			local produce_cargo = -1;
-			if(upgrade.node.IsCargoAccepted())
-				accept_cargo = upgrade.node.cargo_id;
-			if(upgrade.node.IsCargoProduced())
-				produce_cargo = upgrade.node.cargo_id;
-
-			local station_id = AIStation.GetStationID(upgrade.airport_tile);
-			local result = Airport.UpgradeAirportInTown(upgrade.node.GetClosestTown(), station_id, upgrade.to_type_list, accept_cargo, produce_cargo);
-			if(Result.IsSuccess(result))
-			{
-				// Update station tile
-				local new_station_tile = AIStation.GetLocation(station_id);
-				local new_hangar_tile = Airport.GetHangarTile(station_id);
-				this.station[upgrade.index] = new_station_tile;
-				this.depot[upgrade.index] = new_hangar_tile;
-
-				done_airports.append(i);
-			}
-			else 
-			{
-				this.airport_upgrade_failed = true;
-				this.last_airport_upgrade_fail = AIDate.GetCurrentDate();
-				if(result == Result.REBUILD_FAILED)
-				{
-					// old airport was removed, but couldn't be rebuilt => close connection
-					Log.Error("Tried to upgrade airport, but something went wrong after the old airport was removed and", Log.LVL_INFO);
-					Log.Error("a new airport of the old type couldn't be built. The connection will be closed down.", Log.LVL_INFO);
-					this.CloseConnection();
-					return;
-				}
+				local remove_idx = done_airports[i];
+				this.airport_upgrade_list.remove(remove_idx);
 			}
 		}
+	}
 
-		// How much have been done?
-		if(done_airports.len() > 0) // at least one airport is done
-		{
-			if(done_airports.len() == this.airport_upgrade_list.len()) // all airports are done
-			{
-				this.airport_upgrade_list = null;
-
-				// Set state back to active
-				this.StopAirportUpgrading();
-			}
-			else
-			{
-				// at least one airport has been upgraded, but not all.
-
-				// remove the done airports from this.airport_upgrade_list so that it will not be upgraded again
-				for(local i = done_airports.len() -1; i >= 0; --i)
-				{
-					local remove_idx = done_airports[i];
-					this.airport_upgrade_list.remove(remove_idx);
-				}
-			}
-		}
-
-		// Stop upgrading if it has took too long
-		if(this.airport_upgrade_list != null && this.airport_upgrade_start != null && this.airport_upgrade_start + 365 < AIDate.GetCurrentDate()) 
-		{
-			// have tried to upgrade for more than a year
-			this.StopAirportUpgrading();
-		}
+	// Stop upgrading if it has took too long
+	if(this.airport_upgrade_list != null && this.airport_upgrade_start != null && this.airport_upgrade_start + 365 < AIDate.GetCurrentDate()) 
+	{
+		// have tried to upgrade for more than a year
+		this.StopAirportUpgrading();
 	}
 }
 
 function Connection::StopAirportUpgrading()
 {
+	if(this.state != Connection.STATE_AIRPORT_UPGRADE)
+		return;
+
 	// Re-enable aircrafts
 	local veh_list = this.GetVehicles();
 	foreach(vehicle_id, _ in veh_list)
@@ -1356,6 +1465,7 @@ function Connection::StopAirportUpgrading()
 
 	Log.Info("done ", Log.LVL_DEBUG);
 
+	if(this.state == STATE_AIRPORT_UPGRADE) --g_num_connection_airport_upgrade;
 	this.SetState(STATE_ACTIVE);
 
 	// Take adventage of the new airport (especially in case of upgrading from small to large)
@@ -1374,12 +1484,7 @@ function Connection::ManageVehicles()
 	if(this.state != Connection.STATE_ACTIVE)
 		return;
 
-	Log.Info("Connection::ManageVehicles called for connection: " + 
-			AIStation.GetName(AIStation.GetStationID(this.station[0])) + " - " + 
-			AIStation.GetName(AIStation.GetStationID(this.station[1])), Log.LVL_DEBUG);
-
-	//AISign.BuildSign(this.station[0], "manage");
-	//AISign.BuildSign(this.station[1], "manage");
+	Log.Info("Connection::ManageVehicles called for connection: " + this.GetName(), Log.LVL_DEBUG);
 
 	// Sell vehicles that has one of the stations as order, but has at
 	// least one invalid order
@@ -1402,8 +1507,10 @@ function Connection::ManageVehicles()
 		last_vehicle_manage = now;
 
 		Log.Info("Connection::ManageVehicles time to manage vehicles for connection " + this.node[0].GetName() + " - " + this.node[1].GetName(), Log.LVL_INFO);
-		Helper.SetSign(Tile.GetTileRelative(this.station[0], 3, 2), "manage");
-		Helper.SetSign(Tile.GetTileRelative(this.station[1], 3, 2), "manage");
+		if(this.station[0] != null)
+			Helper.SetSign(Tile.GetTileRelative(this.station[0], 3, 2), "manage");
+		if(this.station[1] != null)
+			Helper.SetSign(Tile.GetTileRelative(this.station[1], 3, 2), "manage");
 
 
 		// Sometimes look for new vehicles to upgrade to
@@ -1518,7 +1625,9 @@ function Connection::ManageVehicles()
 					sell_check = income < 0 || max_waiting < 20;
 			}
 
-			sell_check = sell_check && veh_list.Count() > 1;
+			local sell_min_rating = veh_list.Count() <= 2? 50 : 25; // limit with 2 vehicles is 50, otherwise 25 in rating
+
+			sell_check = sell_check && veh_list.Count() > 1 && min_rating > sell_min_rating;
 
 			if(sell_check)
 			{
@@ -1593,14 +1702,15 @@ function Connection::ManageVehicles()
 						break;
 				}
 
+				local buy_rating_limit = veh_list.Count() <= 2? 50 : 20;
 				if(veh_list.Count() == 0 || 
 					(capacity_left &&
-					 max_waiting > waiting_limit) )
+					 (max_waiting > waiting_limit || min_rating < buy_rating_limit)) )
 				{
 					// Buy a new vehicle
 					Log.Info("Manage vehicles: decided to Buy a new bus", Log.LVL_INFO);
 					local engine = this.FindEngineModelToBuy();
-					local num = 1 + (max_waiting - waiting_limit) / buy_size;
+					local num = 1 + (max_waiting - waiting_limit) / buy_size; // if buy reason is low rating, only one vehicle is bought
 					if(num < 1)
 						num = 1;
 					num = Helper.Min(num, 5); // Don't buy more than 5 at a time
@@ -1634,13 +1744,15 @@ function Connection::ManageVehicles()
 		if(very_high_usage)
 			FullLoadAtStations(false);
 		else if(this.IsTownOnly())
-			FullLoadAtStations(min_rating < 40 && max_rating < 65 && max_waiting < 70);
+			FullLoadAtStations((min_rating < 55 || max_rating < 75) && max_waiting < 150);
 		else
 			FullLoadAtStations(true);
 
 		// Unset manage signs
-		Helper.SetSign(Tile.GetTileRelative(this.station[0], 3, 2), "");
-		Helper.SetSign(Tile.GetTileRelative(this.station[1], 3, 2), "");
+		if(this.station[0] != null)
+			Helper.SetSign(Tile.GetTileRelative(this.station[0], 3, 2), "");
+		if(this.station[1] != null)
+			Helper.SetSign(Tile.GetTileRelative(this.station[1], 3, 2), "");
 	}
 	else
 	{
@@ -1656,6 +1768,8 @@ function Connection::GetMinMaxRatingWaiting()
 	local station_tile = null;
 	foreach(station_tile in this.station)
 	{
+		if(station_tile == null) continue;
+		
 		local station_id = AIStation.GetStationID(station_tile);
 		local rate = AIStation.GetCargoRating(station_id, cargo_type);
 		local waiting = AIStation.GetCargoWaiting(station_id, cargo_type);
@@ -1732,22 +1846,60 @@ function Connection::SendVehicleForSelling(vehicle_id)
 function Connection::GetVehicles()
 {
 	// Return the intersection of the vehicles that stop on station 0 and station 1.
-	local veh0 = AIVehicleList_Station(AIStation.GetStationID(station[0]));
-	local veh1 = AIVehicleList_Station(AIStation.GetStationID(station[1]));
+	if(station[0] != null && station[1] != null)
+	{
+		local veh0 = AIVehicleList_Station(AIStation.GetStationID(station[0]));
+		local veh1 = AIVehicleList_Station(AIStation.GetStationID(station[1]));
 
-	veh0.KeepList(veh1);
-	local intersect = veh0;
+		veh0.KeepList(veh1);
+		local intersect = veh0;
 
-	return intersect;
+		return intersect;
+	}
+	else if(AIStation.IsValidStation(station_statistics[0].station_id) && AIStation.IsValidStation(station_statistics[1].station_id))
+	{
+		// A station might just have disappeared, but has its station sign left
+		local veh0 = AIVehicleList_Station(station_statistics[0].station_id);
+		local veh1 = AIVehicleList_Station(station_statistics[1].station_id);
+
+		veh0.KeepList(veh1);
+		local intersect = veh0;
+
+		return intersect;
+	}
+	else if(station[0] != null)
+	{
+		return AIVehicleList_Station(AIStation.GetStationID(station[0]));
+	}
+	else if(station[1] != null)
+	{
+		return AIVehicleList_Station(AIStation.GetStationID(station[1]));
+	}
+	else
+	{
+		return AIList();
+	}
 }
 
 function Connection::GetBrokenVehicles()
 {
-	local veh0 = AIVehicleList_Station(AIStation.GetStationID(station[0]));
-	local veh1 = AIVehicleList_Station(AIStation.GetStationID(station[1]));
+	local veh0 = null;
+	local veh1 = null;
+	if(station[0] != null && station[1] != null)
+	{
+		veh0 = AIVehicleList_Station(AIStation.GetStationID(station[0]));
+		veh1 = AIVehicleList_Station(AIStation.GetStationID(station[1]));
+	}
+	else if(AIStation.IsValidStation(station_statistics[0].station_id) && AIStation.IsValidStation(station_statistics[1].station_id))
+	{
+		// A station might just have disappeared, but has its station sign left
+		veh0 = AIVehicleList_Station(station_statistics[0].station_id);
+		veh1 = AIVehicleList_Station(station_statistics[1].station_id);
+	}
 
-	veh0.AddList(veh1);
-	local union = veh0;
+	local union = AIList();
+	if(veh0 != null) union.AddList(veh0);
+	if(veh1 != null) union.AddList(veh1);
 
 	union.Valuate(HasVehicleInvalidOrders);
 	union.KeepValue(1);
@@ -1932,6 +2084,8 @@ function Connection::SkipAllVehiclesToClosestDepot()
 
 function Connection::RepairRoadConnection()
 {
+	if(station[0] == null || station[1] == null) return false;
+
 	Log.Info("Repairing connection", Log.LVL_INFO);
 	local front1 = AIRoad.GetRoadStationFrontTile(station[0]);
 	local front2 = AIRoad.GetRoadStationFrontTile(station[1]);
