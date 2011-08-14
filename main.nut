@@ -620,7 +620,7 @@ function CluelessPlus::Start()
 			TimerStop("build_check");
 			TimerStart("all_manage");
 
-			if(!vehicle_list.IsEmpty() && AnyVehicleTypeBuildable())
+			if(!vehicle_list.IsEmpty())
 			{
 				TimerStart("scan_depots");
 				this.CheckDepotsForStopedVehicles();
@@ -1009,7 +1009,7 @@ function CluelessPlus::SendLostVehicleForSelling(vehicle_id)
 function CluelessPlus::CheckDepotsForStopedVehicles()
 {
 	local vehicle_list = AIVehicleList();
-	if(!vehicle_list.IsEmpty() && AnyVehicleTypeBuildable())
+	if(!vehicle_list.IsEmpty())
 	{
 		Log.Info("Look for vehicles to sell / send to depot for selling", Log.LVL_SUB_DECISIONS);
 
