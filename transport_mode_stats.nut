@@ -28,6 +28,23 @@ function TransportModeToVehicleType(tm)
 	return null;
 }
 
+function VehicleTypeToTransportMode(tm)
+{
+	switch(tm)
+	{
+		case AIVehicle.VT_ROAD:
+			return TM_ROAD;
+		case AIVehicle.VT_AIR:
+			return TM_AIR;
+		case AIVehicle.VT_RAIL:
+			return TM_RAIL;
+		case AIVehicle.VT_WATER:
+			return TM_WATER;
+	}
+
+	return null;
+}
+
 function TransportModeToString(tm)
 {
 	switch(tm)

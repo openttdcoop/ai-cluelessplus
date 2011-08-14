@@ -128,6 +128,11 @@ function GetAvailableTransportModes(min_vehicles_left = 1)
 	return tm_list;
 }
 
+function GetSupportedVehicleTypeList()
+{
+	return [AIVehicle.VT_AIR, AIVehicle.VT_ROAD];
+}
+
 function GetVehiclesWithoutOrders()
 {
 	local empty_orders = AIVehicleList();
@@ -203,12 +208,35 @@ function GetCargoFromStation(station_id)
 function AnyVehicleTypeBuildable()
 {
 	local vt_available = false;
-	foreach(vt in [AIVehicle.VT_ROAD, AIVehicle.VT_AIR])
+	local vt_list = GetSupportedVehicleTypeList();
+	foreach(vt in vt_list)
 	{
-		vt_available = vt_available || Vehicle.GetVehicleLimit(vt);
+		vt_available = vt_available || Vehicle.GetVehicleLimit(vt) > 0;
 	}
 
 	return vt_available;
+}
+
+// Call this function if AnyVehicleTypeBuildable returns false
+function DisplayEnableVehicleTypesTips()
+{
+	local vt_list = GetSupportedVehicleTypeList();
+	foreach(vt in vt_list)
+	{
+		local label = TransportModeToString( VehicleTypeToTransportMode(vt) );
+		label = label.toupper();
+
+		local s = Vehicle.GetVehicleTypeDisabledBySettingString(vt);
+		if(s != null)
+			Log.Info(label + "  is disabled by: " + s);
+		else
+		{
+			if(Vehicle.GetVehiclesLeft(vt) == 0)
+				Log.Info(label + "  is enabled, but have zero vehicles left");
+			else
+				Log.Info(label + "  is enabled");
+		}
+	}
 }
 
 // if avoid_small_airports is true, the result will only contain small airports
@@ -525,6 +553,8 @@ function CluelessPlus::Start()
 		Log.Error("All transport modes that are supported by this AI are disabled for AIs (or have vehicle limit = 0).", Log.LVL_INFO);
 		Log.Info("Enable road or air transport mode in advanced settings if you want that this AI should build something", Log.LVL_INFO);
 		Log.Info("", Log.LVL_INFO);
+		DisplayEnableVehicleTypesTips();
+		Log.Info("", Log.LVL_INFO);
 	}
 	
 	state_build = false;
@@ -735,7 +765,7 @@ function CluelessPlus::Start()
 
 			// wait a year for next yearly manage
 			last_yearly_manage = AIDate.GetCurrentDate();
-			Log.Info("Yearly manage - done", Log.LVL_INFO);
+			Log.Info("Yearly manage - done", Log.LVL_SUB_DECISIONS);
 		}
 
 		TimerStop("all");
@@ -1119,10 +1149,13 @@ function CluelessPlus::GetNewPairMoneyLimit()
 {
 	local limits = this.GetNewPairMoneyLimitPerTransportMode();
 	local min_limit = null;
-	foreach(item in limits)
+	if(limits != null)
 	{
-		if(min_limit == null || item.limit < min_limit)
-			min_limit = item.limit;
+		foreach(item in limits)
+		{
+			if(min_limit == null || item.limit < min_limit)
+				min_limit = item.limit;
+		}
 	}
 
 	if(min_limit == null) min_limit = 95000;
@@ -1137,7 +1170,7 @@ function CluelessPlus::GetNewPairMoneyLimitPerTransportMode()
 
 	// Make sure there are at least one transport mode
 	if(tm_list.len() == 0)
-		return 95000;
+		return null;
 
 	local tm_money_limits = [];
 	foreach(tm in tm_list)
