@@ -366,6 +366,20 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 		return false;
 	}
 
+	if(num_vehicles <= 0)
+	{
+		Log.Warning("BuyVehicles: Asked to buy zero vehicles", Log.LVL_INFO);
+		return false;
+	}
+
+	// Don't buy more vehicles than allowed
+	num_vehicles = Helper.Min(num_vehicles, Vehicle.GetVehiclesLeft(AIEngine.GetVehicleType(engine_id)));
+	if(num_vehicles <= 0)
+	{
+		Log.Warning("BuyVehicles: Vehicle limit doesn't allow any new vehicles", Log.LVL_SUB_DECISIONS);
+		return false;
+	}
+
 	local min_reliability = 85;
 	local new_bus;
 	local i;
