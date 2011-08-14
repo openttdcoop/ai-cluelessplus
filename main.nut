@@ -283,6 +283,11 @@ function HasVehicleGoToAircraftDumpOrder(vehicle_id)
 	return false;
 }
 
+function GetNoiseBudgetOverrun()
+{
+	return AIGameSettings.GetValue("station_noise_level") == 1? 2 : 0; // allow airports to go at maximum 2 over noise budget, to allow for new airports to be placed further away. 
+}
+
 
 /*
  * Will return a station id of an airport that has no other purpose
@@ -453,7 +458,7 @@ class CluelessPlus extends AIController {
 	function CheckDepotsForStopedVehicles();
 	function GetNewPairMoneyLimitPerTransportMode();
 	function GetNewPairMoneyLimit();
-	function ConnectPair();
+	function ConnectPair(budget);
 
 	function Save();
 	function Load(version, data);
@@ -561,12 +566,12 @@ function CluelessPlus::Start()
 			local allow_build_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
 			local allow_build_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW;
 
-			local money_limit = this.GetNewPairMoneyLimit();
+			local new_pair_money_limit = this.GetNewPairMoneyLimit();
 
 			// ... check if we can afford to build some stuff (or we don't have anything -> need to build to either succeed or go bankrupt and restart)
 			//   AND road vehicles are not disabled
 			//   AND at least 5 more buses/trucks can be built before reaching the limit (a 1 bus/truck connection will not become good)
-			if((this.GetMaxMoney() > money_limit || AIStationList(AIStation.STATION_ANY).IsEmpty() ) &&
+			if((this.GetMaxMoney() > new_pair_money_limit || AIStationList(AIStation.STATION_ANY).IsEmpty() ) &&
 					AnyVehicleTypeBuildable() &&
 					(allow_build_road || allow_build_air) )
 			{
@@ -689,31 +694,32 @@ function CluelessPlus::Start()
 			}
 
 			TimerStop("all_manage");
-		}	
 
-		if(state_build)
-		{
-			TimerStart("state_build");
 
-			// Simulate the time it takes to look for a connection
-			if(AIController.GetSetting("slow_ai"))
-				AIController.Sleep(1000); // a bit more than a month
-
-			TimerStart("connect_pair");
-			local ret = this.ConnectPair();
-			state_build = false;
-			TimerStop("connect_pair");
-
-			if(ret && !AIMap.IsValidTile(AICompany.GetCompanyHQ(AICompany.COMPANY_SELF)))
+			if(state_build)
 			{
-				this.BuildHQ();
-			}
-			else
-			{
-				Log.Warning("Could not find two towns/industries to connect", Log.LVL_INFO);
-			}
+				TimerStart("state_build");
 
-			TimerStop("state_build");
+				// Simulate the time it takes to look for a connection
+				if(AIController.GetSetting("slow_ai"))
+					AIController.Sleep(1000); // a bit more than a month
+
+				TimerStart("connect_pair");
+				local ret = this.ConnectPair(new_pair_money_limit * 15 / 10);
+				state_build = false;
+				TimerStop("connect_pair");
+
+				if(ret && !AIMap.IsValidTile(AICompany.GetCompanyHQ(AICompany.COMPANY_SELF)))
+				{
+					this.BuildHQ();
+				}
+				else
+				{
+					Log.Warning("Could not find two towns/industries to connect", Log.LVL_INFO);
+				}
+
+				TimerStop("state_build");
+			}
 		}
 
 		// Pay back unused money
@@ -792,32 +798,34 @@ function CluelessPlus::HandleEvents()
 			local lost_event = AIEventVehicleLost.Convert(ev);
 			local lost_veh = lost_event.GetVehicleID();
 
-			Log.Info("Vehicle lost event detected - lost vehicle: " + AIVehicle.GetName(lost_veh), Log.LVL_INFO);
-
-			// This is not a pointer to the regular connection object. Instead a new object
-			// is created with enough data to use RepairRoadConnection.
-			local connection = ReadConnectionFromVehicle(lost_veh);
-			
-			if(connection != null && connection.station.len() >= 2 && connection.state == Connection.STATE_ACTIVE)
+			if(AIVehicle.IsValidVehicle(lost_veh))
 			{
-				Log.Info("Try to connect the stations again", Log.LVL_SUB_DECISIONS);
+				Log.Info("Vehicle lost event detected - lost vehicle: " + AIVehicle.GetName(lost_veh), Log.LVL_INFO);
 
-				if(!connection.RepairRoadConnection())
+				// This is not a pointer to the regular connection object. Instead a new object
+				// is created with enough data to use RepairRoadConnection.
+				local connection = ReadConnectionFromVehicle(lost_veh);
+				
+				if(connection != null && connection.station.len() >= 2 && connection.state == Connection.STATE_ACTIVE)
+				{
+					Log.Info("Try to connect the stations again", Log.LVL_SUB_DECISIONS);
+
+					if(!connection.RepairRoadConnection())
+						this.SendLostVehicleForSelling(lost_veh);
+
+					// TODO:
+					// If a vehicle is stuck somewhere but the connection succeeds to repair every time without letting the vehicles out,
+					// they will never be sent for selling nor will any depot be constructed nearby in order to sell the vehicles and
+					// reduce the cost + vehicle usage. (except for if the connection decide to sell the vehicles in the vehicle management
+					// procedure)
+					//
+					// If many vehicles are lost, they can possible also cause a management hell.
+				}
+				else
+				{
 					this.SendLostVehicleForSelling(lost_veh);
-
-				// TODO:
-				// If a vehicle is stuck somewhere but the connection succeeds to repair every time without letting the vehicles out,
-				// they will never be sent for selling nor will any depot be constructed nearby in order to sell the vehicles and
-				// reduce the cost + vehicle usage. (except for if the connection decide to sell the vehicles in the vehicle management
-				// procedure)
-				//
-				// If many vehicles are lost, they can possible also cause a management hell.
+				}
 			}
-			else
-			{
-				this.SendLostVehicleForSelling(lost_veh);
-			}
-			
 		}
 		else if(ev_type == AIEvent.AI_ET_VEHICLE_CRASHED)
 		{
@@ -1145,7 +1153,7 @@ function CluelessPlus::GetNewPairMoneyLimitPerTransportMode()
 			local ap_type = airport_type_list.Begin();
 			local airport_cost = airport_type_list.GetValue(ap_type) * 2;
 
-			local engine = Strategy.FindEngineModelToPlanFor(Helper.GetPAXCargo(), AIVehicle.VT_AIR, Airport.IsSmallAirport(ap_type));
+			local engine = Strategy.FindEngineModelToPlanFor(Helper.GetPAXCargo(), AIVehicle.VT_AIR, Airport.IsSmallAirport(ap_type), false);
 			local engine_cost = AIEngine.GetPrice(engine);
 
 			item.limit = (airport_cost + engine_cost) * 12 / 10; // 20 % margin
@@ -1157,7 +1165,7 @@ function CluelessPlus::GetNewPairMoneyLimitPerTransportMode()
 	return tm_money_limits;
 }
 
-function CluelessPlus::ConnectPair()
+function CluelessPlus::ConnectPair(budget)
 {
 	// scan for two pairs to connect
 
@@ -1215,6 +1223,7 @@ function CluelessPlus::ConnectPair()
 	// We don't want to worry about budgeting exactly how much money that is needed, get as much money as possible.
 	// We can always pay back later. 
 	local old_balance = Money.MaxLoan();
+	local budget_money_left = budget;
 
 
 	//// Start building ////
@@ -1229,6 +1238,12 @@ function CluelessPlus::ConnectPair()
 		Money.RestoreLoan(old_balance);
 		return false;
 	}
+
+	// reduce budget by money spent on stations
+	budget_money_left -= old_balance - AICompany.GetBankBalance(AICompany.COMPANY_SELF);
+	Money.MakeMaximumPayback();
+	Money.MakeSureToHaveAmount(budget_money_left / 2); // reduce loan to some reasonable amount for pathfinding to not fail due to low money, but not too high
+	local balance_before_infra_build = AICompany.GetBankBalance(AICompany.COMPANY_SELF);
 
 	Log.Info("Built stations + depots", Log.LVL_INFO);
 
@@ -1263,7 +1278,7 @@ function CluelessPlus::ConnectPair()
 
 					for(local i = 0; i < 2; i++)
 					{
-						local station_front_tile = AIRoad.GetRoadStationFrontTile(connection.station[i]);
+						local station_front_tile = Road.GetRoadStationFrontTile(connection.station[i]);
 						local depot_front_tile = AIRoad.GetRoadDepotFrontTile(connection.depot[i]);
 
 						//Helper.SetSign(station_front_tile, "stn front");
@@ -1293,8 +1308,8 @@ function CluelessPlus::ConnectPair()
 					// Don't waste money on a road if connecting stops with depots failed
 					if(connected)
 					{
-						local from = AIRoad.GetRoadStationFrontTile(connection.station[0]);
-						local to = AIRoad.GetRoadStationFrontTile(connection.station[1]);
+						local from = Road.GetRoadStationFrontTile(connection.station[0]);
+						local to = Road.GetRoadStationFrontTile(connection.station[1]);
 						local repair = false;
 
 						// First try 100 loops from the source, if path finding do not fail 
@@ -1327,6 +1342,8 @@ function CluelessPlus::ConnectPair()
 	}
 	TimerStop("build_infra_connect");
 
+	budget_money_left -= balance_before_infra_build - AICompany.GetBankBalance(AICompany.COMPANY_SELF);
+	Money.MaxLoan(); // no more budgeting - get all money!
 
 	// Only buy buses if we actually did connect the two cities.
 	if(connected && !failed)
@@ -1394,8 +1411,8 @@ function CluelessPlus::ConnectPair()
 				{
 					local pf_loops_used = road_builder.GetPFLoopsUsed();
 					local build_loops_used = road_builder.GetBuildLoopsUsed();
-					local from = AIRoad.GetRoadStationFrontTile(connection.station[0]);
-					local to = AIRoad.GetRoadStationFrontTile(connection.station[1]);
+					local from = Road.GetRoadStationFrontTile(connection.station[0]);
+					local to = Road.GetRoadStationFrontTile(connection.station[1]);
 					local distance = AIMap.DistanceManhattan(from, to);
 
 					Log.Info("pf loops used:    " + pf_loops_used, Log.LVL_INFO);
@@ -1480,11 +1497,13 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 
 	// If transport mode is air, get airport type to build
 	local airport_type = null;
+	local use_magic_dtrs = null;
+
 	if(connection.transport_mode == TM_AIR)
 	{
 		// Select an airport that can be afforded after reserving* money for one aircraft   * = no actual reservation is made. Only accounting for the engine is done.
 
-		local large_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, false);
+		local large_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, false, false);
 		local large_engine_cost = AIEngine.GetPrice(large_engine);
 
 		// can afford large airport + large airplane?
@@ -1497,7 +1516,7 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 			// couldn't afford large airport + large engine.
 			// try small airport
 
-			local small_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, true);
+			local small_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, true, false);
 			local small_engine_cost = AIEngine.GetPrice(small_engine);
 
 			airport_type_list = GetAirportTypeList_AllowedAndBuildable(true);
@@ -1512,6 +1531,24 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		{
 			Log.Warning("Tried to connect pair by air, but there is not enough money to afford an airport + engine", Log.LVL_INFO);
 			return false;
+		}
+	}
+	else if(connection.transport_mode == TM_ROAD)
+	{
+		// Decide if we should use DTRS or not
+		local magic_dtrs_allowed = AIController.GetSetting("enable_magic_dtrs");
+		if(magic_dtrs_allowed)
+		{
+			// See if the desired engine is articulated or not
+			local rv_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_ROAD, false, magic_dtrs_allowed);
+
+			// Use the magic DTRS only when we get an articulated engine
+			use_magic_dtrs = AIEngine.IsArticulated(rv_engine) ||
+				AIBase.RandRange(6) < 1; // or at one time in 6, use dtrs anyway just for some randomization (and higher chance of finding bugs :-D )
+		}
+		else
+		{
+			use_magic_dtrs = false;
 		}
 	}
 
@@ -1534,12 +1571,26 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 				case TM_ROAD:
 					{
 						local road_veh_type = AIRoad.GetRoadVehicleTypeForCargo(node.cargo_id);
-						station_tile = Road.BuildStopInTown(node.town_id, road_veh_type, accept_cargo, produce_cargo);
+						local stop_length = 2;
 
-						if (station_tile != null)
-							depot_tile = Road.BuildDepotNextToRoad(AIRoad.GetRoadStationFrontTile(station_tile), 0, 100);
+						if(use_magic_dtrs)
+						{
+							local result = Road.BuildMagicDTRSInTown(node.town_id, road_veh_type, stop_length, accept_cargo, produce_cargo);
+							if(result.result)
+							{
+								station_tile = AIStation.GetLocation(result.station_id);
+								depot_tile = result.depot_tile;
+							}
+						}
 						else
-							Log.Warning("failed to build bus/truck stop in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
+						{
+							station_tile = Road.BuildStopInTown(node.town_id, road_veh_type, accept_cargo, produce_cargo);
+
+							if (station_tile != null)
+								depot_tile = Road.BuildDepotNextToRoad(Road.GetRoadStationFrontTile(station_tile), 0, 100);
+							else
+								Log.Warning("failed to build bus/truck stop in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
+						}
 					}
 					break;
 
@@ -1570,7 +1621,7 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 						station_tile = null;
 					
 					if (station_tile != null)
-						depot_tile = Road.BuildDepotNextToRoad(AIRoad.GetRoadStationFrontTile(station_tile), 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
+						depot_tile = Road.BuildDepotNextToRoad(Road.GetRoadStationFrontTile(station_tile), 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
 					break;
 
 				case TM_AIR:
@@ -1619,7 +1670,8 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		{
 			if(station != null && AIMap.IsValidTile(station))
 			{
-				AITile.DemolishTile(station);
+				local station_id = AIStation.GetStationID(station);
+				Station.DemolishStation(station_id);
 			}
 		}
 		foreach(depot in connection.depot)
@@ -1629,6 +1681,8 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 				AITile.DemolishTile(depot);
 			}
 		}
+
+		Log.Info("Demolished failed stn + depot", Log.LVL_DEBUG);
 
 		return false;
 	}
@@ -1741,6 +1795,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	connection.cargo_type = Vehicle.GetVehicleCargoType(vehId);
 
 	local station_type = Engine.GetRequiredStationType(AIVehicle.GetEngineType(vehId));
+	if(station_type == null) return null;
 	switch(AIVehicle.GetVehicleType(vehId))
 	{
 		case AIVehicle.VT_ROAD:

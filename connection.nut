@@ -98,6 +98,7 @@ class Connection
 	function IsTownOnly();
 	function HasSmallAirport();
 	function GetSmallAirportCount();
+	function HasMagicDTRSStops();
 	function GetTotalPoputaltion();
 	function GetTotalDistance(); // only implemented for 2 towns
 	function ManageState()
@@ -113,6 +114,7 @@ class Connection
 	function FindEngineModelToBuy();
 	function BuyVehicles(num_vehicles, engine_id);
 	function NumVehiclesToBuy(connection);
+	function GetDepotServiceFlag();
 
 	function GetVehicles();
 	function GetBrokenVehicles(); // Gets broken vehicles that stops at any of the stations
@@ -178,7 +180,7 @@ function Connection::ReActivateConnection()
 		if(AIOrder.IsGotoDepotOrder(veh_id, i_order))
 		{
 			// Always go to depot if breakdowns are "normal", otherwise only go if needed
-			local service_flag = AIGameSettings.GetValue("vehicle_breakdowns") == 2? 0 : AIOrder.AIOF_SERVICE_IF_NEEDED;
+			local service_flag = this.GetDepotServiceFlag();
 
 			AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | service_flag);
 		}
@@ -309,6 +311,20 @@ function Connection::GetSmallAirportCount()
 	return count;
 }
 
+function Connection::HasMagicDTRSStops()
+{
+	if(this.transport_mode != TM_ROAD)
+		return false;
+
+	foreach(station_tile in this.station)
+	{
+		if(AIRoad.IsDriveThroughRoadStationTile(station_tile))
+			return true;
+	}
+
+	return false;
+}
+
 function Connection::GetTotalPoputaltion()
 {
 	local val = null;
@@ -332,7 +348,8 @@ function Connection::GetTotalDistance()
 function Connection::FindEngineModelToBuy()
 {
 	local has_small_airport = this.HasSmallAirport();
-	return Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), has_small_airport);
+	local allow_articulated_rvs = this.HasMagicDTRSStops();
+	return Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), has_small_airport, allow_articulated_rvs);
 }
 function Connection::BuyVehicles(num_vehicles, engine_id)
 {
@@ -456,7 +473,7 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 		else
 		{
 			// Always go to depot if breakdowns are "normal", otherwise only go if needed
-			local service_flag = AIGameSettings.GetValue("vehicle_breakdowns") == 2? 0 : AIOrder.AIOF_SERVICE_IF_NEEDED;
+			local service_flag = (this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.AIOF_NON_STOP_INTERMEDIATE : 0) | this.GetDepotServiceFlag();
 			local station_flag = this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.AIOF_NON_STOP_INTERMEDIATE : AIOrder.AIOF_NONE;
 
 			AIOrder.AppendOrder(new_bus, depot[0], service_flag);
@@ -539,6 +556,19 @@ function Connection::NumVehiclesToBuy(engine_id)
 
 		Log.Info("NumVehiclesToBuy(): Buy " + num_veh + " vehicles", Log.LVL_SUB_DECISIONS);
 		return num_veh;
+	}
+}
+
+function Connection::GetDepotServiceFlag()
+{
+	if(AIGameSettings.GetValue("vehicle_breakdowns") != 2 || // if breakdowns is enabled
+			HasMagicDTRSStops()) 
+	{
+		return 0; //  Always visit the depots
+	}
+	else
+	{
+		return AIOrder.AIOF_SERVICE_IF_NEEDED;
 	}
 }
 
@@ -914,7 +944,22 @@ function Connection::ManageStations()
 
 			foreach(stop_tile, _ in existing_stop_tiles)
 			{
-				local front_tile = AIRoad.GetRoadStationFrontTile(stop_tile);
+				local front_tile = Road.GetRoadStationFrontTile(stop_tile);
+				local is_dtrs = AIRoad.IsDriveThroughRoadStationTile(stop_tile);
+				if(is_dtrs)
+				{
+					if(AIMap.DistanceManhattan(stop_tile, front_tile) != 1)
+					{
+						// This DTRS station tile is not adjacent to the front tile
+						continue;
+					}
+
+					if(AIRoad.IsRoadDepotTile(front_tile))
+					{
+						Log.Warning("Found a front tile of a DTRS that is a road depot!", Log.LVL_INFO);
+						continue; // don't demolish our own depot!
+					}
+				}
 				if(!AIRoad.AreRoadTilesConnected(stop_tile, front_tile))
 				{
 					Log.Warning("Found part of bus station " + AIStation.GetName(station_id) + " that is not connected to road. Trying to fix it.. ", Log.LVL_INFO);
@@ -930,10 +975,12 @@ function Connection::ManageStations()
 							// Can't connect the station -> remove it
 							if(num_remaining_stop_tiles > 1) // Don't remove the last station tile. If we would want to do that the entire connection has to be closed down which is not supported.
 							{
-								Helper.SetSign(stop_tile, "no rd acc");
 								Helper.SetSign(stop_tile, "no road access");
-								AITile.DemolishTile(stop_tile);
-								num_remaining_stop_tiles--;
+								if(!is_dtrs) // never demolish DTRS station parts
+								{
+									AITile.DemolishTile(stop_tile);
+									num_remaining_stop_tiles--;
+								}
 
 								if(this.station[town_i] == stop_tile)
 								{
@@ -953,7 +1000,7 @@ function Connection::ManageStations()
 
 		// Check if the stations are allowed to expand, and then check if there is a need for expansion.
 		local max_num_bus_stops_per_station = AIController.GetSetting("max_num_bus_stops");
-		if(max_num_bus_stops_per_station > 1)
+		if(max_num_bus_stops_per_station > 1 && !this.HasMagicDTRSStops()) // expanding of MagicDTRS has not been implemented
 		{
 			local percent_usage = [Helper.Max(station_statistics[0].usage.bus.percent_usage, station_statistics[0].usage.truck.percent_usage),
 					Helper.Max(station_statistics[1].usage.bus.percent_usage, station_statistics[1].usage.truck.percent_usage) ];
@@ -1103,7 +1150,8 @@ function Connection::CheckForAirportUpgrade()
 		if(upgrade_need <= 200 && has_small)
 		{
 			// Get best engine, also including large aircrafts
-			local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), false); 
+			local articulated_rvs = false;
+			local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), false, articulated_rvs); 
 			if(AIEngine.GetPlaneType(best_engine) == AIAirport.PT_BIG_PLANE)
 			{
 				// best engine is a large aircraft
@@ -1191,7 +1239,7 @@ function Connection::CheckForAirportUpgrade()
 						continue;
 
 					// Noise constraints?
-					local budget_overrun = AIGameSetting.GetValue("station_noise_level") == 1? 3 : 0; // allow airports to go at maximum 3 over noise budget, to allow for new airports to be placed further away. 
+					local budget_overrun = GetNoiseBudgetOverrun();
 					if(AIAirport.GetNoiseLevelIncrease(station_tile, ap_type) - budget_overrun > noise_budget) 
 					{
 						Log.Info("Airport type to noisy for " + this.node[i].GetName(), Log.LVL_INFO);
@@ -1744,7 +1792,12 @@ function Connection::ManageVehicles()
 		if(very_high_usage)
 			FullLoadAtStations(false);
 		else if(this.IsTownOnly())
-			FullLoadAtStations((min_rating < 55 || max_rating < 75) && max_waiting < 150);
+		{
+			if(this.transport_mode == TM_ROAD)
+				FullLoadAtStations((min_rating < 55 || max_rating < 75) && max_waiting < 55);
+			else
+				FullLoadAtStations((min_rating < 55 || max_rating < 75) && max_waiting < 150);
+		}
 		else
 			FullLoadAtStations(true);
 
@@ -2021,7 +2074,7 @@ function Connection::StopInDepots(stop_in_depots)
 			else
 			{
 				// Always go to depot if breakdowns are "normal", otherwise only go if needed
-				local service_flag = AIGameSettings.GetValue("vehicle_breakdowns") == 2? 0 : AIOrder.AIOF_SERVICE_IF_NEEDED;
+				local service_flag = this.GetDepotServiceFlag();
 
 				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | service_flag);
 			}
@@ -2087,8 +2140,8 @@ function Connection::RepairRoadConnection()
 	if(station[0] == null || station[1] == null) return false;
 
 	Log.Info("Repairing connection", Log.LVL_INFO);
-	local front1 = AIRoad.GetRoadStationFrontTile(station[0]);
-	local front2 = AIRoad.GetRoadStationFrontTile(station[1]);
+	local front1 = Road.GetRoadStationFrontTile(station[0]);
+	local front2 = Road.GetRoadStationFrontTile(station[1]);
 
 	AICompany.SetLoanAmount(AICompany.GetMaxLoanAmount());
 	local road_builder = RoadBuilder();
@@ -2129,7 +2182,8 @@ function Connection::RepairRoadConnection()
 function Connection::FindNewDesiredEngineType()
 {
 	local small_airport = this.HasSmallAirport();
-	local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), small_airport); 
+	local articulated_rvs = this.HasMagicDTRSStops();
+	local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), small_airport, articulated_rvs); 
 	
 	Log.Info(this.GetName() + " have small airport = " + small_airport, Log.LVL_DEBUG);
 

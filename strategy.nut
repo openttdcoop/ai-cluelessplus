@@ -3,13 +3,13 @@ class Strategy {
 
 	static function UpdateNewConnectionEngineList(engine_list);
 
-	static function FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only);
-	static function FindEngineModelToBuy(cargo_id, vehicle_type, small_aircraft_only);
+	static function FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only, allow_articulated_rvs);
+	static function FindEngineModelToBuy(cargo_id, vehicle_type, small_aircraft_only, allow_articulated_rvs);
 
 	static function EngineBuyScore(engine_id);
 }
 
-function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only)
+function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only, allow_articulated_rvs)
 {
 	// find a bus model to buy
 	local bus_list = AIEngineList(vehicle_type);
@@ -18,11 +18,14 @@ function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircra
 	bus_list.Valuate(AIEngine.CanRefitCargo, cargo_id)
 	bus_list.KeepValue(1); 
 
-	// Exclude articulated vehicles
+	// Exclude articulated vehicles + trams
 	if (vehicle_type == AIVehicle.VT_ROAD)
 	{
-		bus_list.Valuate(AIEngine.IsArticulated)
-		bus_list.KeepValue(0); 
+		if(!allow_articulated_rvs)
+		{
+			bus_list.Valuate(AIEngine.IsArticulated)
+			bus_list.KeepValue(0); 
+		}
 
 		// Exclude trams
 		bus_list.Valuate(AIEngine.GetRoadType);
@@ -61,9 +64,9 @@ function Strategy::FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircra
 	return bus_list.IsEmpty()? -1 : bus_list.Begin();
 }
 
-function Strategy::FindEngineModelToBuy(cargo_id, vehicle_type, small_aircraft_only)
+function Strategy::FindEngineModelToBuy(cargo_id, vehicle_type, small_aircraft_only, allow_articulated_rvs)
 {
-	return Strategy.FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only);
+	return Strategy.FindEngineModelToPlanFor(cargo_id, vehicle_type, small_aircraft_only, allow_articulated_rvs);
 }
 
 function Strategy::EngineBuyScore(engine_id)

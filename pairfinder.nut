@@ -210,6 +210,27 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 		return null;
 	}
 
+	// transport modes to try for each pair
+	local try_tm = [];
+	local use_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW;
+	local use_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
+	local use_air_only = !use_road && use_air;
+	if(use_air)
+		try_tm.append(TM_AIR);
+	if(use_road)
+		try_tm.append(TM_ROAD);
+
+	// Get min noise needed for aircraft
+	local airport_noise = 0;
+	if(use_air)
+	{
+		local airport_type_list = GetAirportTypeList_AllowedAndBuildable();
+		airport_type_list.Valuate(Airport.GetAirportTypeNoiseLevel);
+		airport_type_list.Sort(AIList.SORT_BY_VALUE, AIList.SORT_ASCENDING);
+		airport_noise = airport_type_list.GetValue(airport_type_list.Begin());
+	}
+
+
 	// Get the ideal length
 
 	// TODO: Get ideal distance per cargo type for each vehicle type
@@ -238,13 +259,6 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 			if (i >= 8 * (1 + desperateness)) break;
 		}
 	}
-
-	// transport modes to try for each pair
-	local try_tm = [];
-	if(Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW)
-		try_tm.append(TM_AIR);
-	if(Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW)
-		try_tm.append(TM_ROAD);
 
 	local global_best_pairs = FibonacciHeap();
 
@@ -308,10 +322,17 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 			local transport_mode = TM_INVALID;
 
 			local dist = AIMap.DistanceManhattan(dest_node.GetLocation(), source_node.GetLocation());
+			local possible_tms = [];
 			foreach(tm in try_tm)
 			{
 				// At the moment, only town to town connections can be made via aircraft
 				if(tm == TM_AIR && (!dest_node.IsTown() || !source_node.IsTown()))
+					continue;
+
+				// check that town connections allow airport noise
+				local budget_overrun = GetNoiseBudgetOverrun();
+				if(AITown.GetAllowedNoise(source_node.town_id) + budget_overrun < airport_noise 
+						|| AITown.GetAllowedNoise(dest_node.town_id) + budget_overrun < airport_noise)
 					continue;
 
 				local dist_deviation = Helper.Abs(g_tm_stats[tm].ideal_construct_distance - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
@@ -326,11 +347,17 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 					continue;
 
 				// The pair can be connected using transport_mode
-				transport_mode = tm;
-				break;
+				possible_tms.append(tm);
 			}
 
-			// Check if no transport mode could handle the pair
+			// Couldn't find any transport mode?
+			if(possible_tms.len() == 0)
+				continue;
+
+			// pick random transport mode
+			transport_mode = possible_tms[AIBase.RandRange(possible_tms.len())];
+			
+			// Make sure picked transport mode is valid
 			if(transport_mode == TM_INVALID)
 				continue;
 
