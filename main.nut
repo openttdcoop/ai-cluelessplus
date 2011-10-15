@@ -1711,7 +1711,9 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		{
 			if(depot != null && AIMap.IsValidTile(depot))
 			{
+				local front = AIRoad.GetRoadDepotFrontTile(depot);
 				AITile.DemolishTile(depot);
+				AIRoad.RemoveRoad(front, depot);
 			}
 		}
 

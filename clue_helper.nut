@@ -248,6 +248,9 @@ function ClueHelper::DecodeIntegerFromStr(str)
 
 function ClueHelper::StoreInStationName(station_id, str)
 {
+	if(!AIStation.IsValidStation(station_id))
+		return false;
+
 	return ClueHelper.StoreInObjectName(station_id, AIBaseStation, str);
 }
 
@@ -258,6 +261,9 @@ function ClueHelper::ReadStrFromStationName(station_id)
 
 function ClueHelper::StoreInVehicleName(vehicle_id, str)
 {
+	if(!AIVehicle.IsValidVehicle(vehicle_id))
+		return false;
+
 	return ClueHelper.StoreInObjectName(vehicle_id, AIVehicle, str);
 }
 
@@ -273,7 +279,7 @@ function ClueHelper::StoreInObjectName(obj_id, obj_api_class, str)
 
 	while(!obj_api_class.SetName(obj_id, obj_name))
 	{
-		//Log.Info(AIError.GetLastErrorString(), Log.LVL_DEBUG)
+		Log.Info(AIError.GetLastErrorString(), Log.LVL_DEBUG)
 		i++;
 		obj_name = str + " " + ClueHelper.EncodeIntegerInStr(i, 2);
 
