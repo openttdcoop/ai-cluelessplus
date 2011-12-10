@@ -1717,7 +1717,7 @@ function Connection::ManageVehicles()
 					// For some particular reason buses are not sent to depot. Also for some particular reason the depots are not added to order list.
 
 					veh_list.Valuate(AIVehicle.GetAgeLeft)
-					veh_list.Sort(AIAbstractList.SORT_BY_VALUE, true); // Vehicle with least amount of time left first
+					veh_list.Sort(AIList.SORT_BY_VALUE, true); // Vehicle with least amount of time left first
 					veh_to_sell = veh_list.Begin();
 					if(!AIVehicle.IsValidVehicle(veh_to_sell))
 					{
@@ -2258,7 +2258,7 @@ function Connection::MassUpgradeVehicles()
 		while(wrong_type_count > 0 && bank_balance < (tot_cost - tot_value))
 		{
 			// Reduce the upgrade list with the lowest valuable old vehicle ( => higher probability that the upgrade can be performed on many vehicles)
-			vehicle_list.Sort(AIAbstractList.SORT_BY_VALUE, true); // lowest value first
+			vehicle_list.Sort(AIList.SORT_BY_VALUE, true); // lowest value first
 			tot_value -= vehicle_list.GetValue(vehicle_list.Begin());
 			tot_cost -= AIEngine.GetPrice(this.desired_engine);
 			vehicle_list.RemoveTop(1);

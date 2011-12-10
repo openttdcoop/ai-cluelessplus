@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 12);
+import("util.superlib", "SuperLib", 17);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -1970,7 +1970,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 
 	local group = AIVehicleList_SharedOrders(vehId);
 	group.Valuate(AIVehicle.GetAge);
-	group.Sort(AIAbstractList.SORT_BY_VALUE, false); // oldest first
+	group.Sort(AIList.SORT_BY_VALUE, false); // oldest first
 	local estimated_construction_date = AIDate.GetCurrentDate() - AIVehicle.GetAge(group.Begin());
 	
 	connection.date_built = estimated_construction_date;
@@ -2285,10 +2285,10 @@ function CluelessPlus::PlaceHQ(nearby_tile)
 	tiles.KeepValue(1);
 
 	tiles.Valuate(AIMap.DistanceManhattan, nearby_tile);
-	tiles.Sort(AIAbstractList.SORT_BY_VALUE, true); // lowest distance first
+	tiles.Sort(AIList.SORT_BY_VALUE, true); // lowest distance first
 
 	local possible_tiles = AIList();
-	possible_tiles.Sort(AIAbstractList.SORT_BY_VALUE, true); // lowest cost first
+	possible_tiles.Sort(AIList.SORT_BY_VALUE, true); // lowest cost first
 
 	// Go through the tiles starting from closest to nearby_tile and check if HQ can be built there
 	foreach(hq_tile, _ in tiles)

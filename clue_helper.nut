@@ -144,10 +144,9 @@ function ClueHelper::ItemValuator(item)
 function ClueHelper::CopyListSwapValuesAndItems(old_list)
 {
 	local new_list = AIList();
-	for(local i = old_list.Begin(); old_list.HasNext(); i = old_list.Next())
+	foreach(key, value in old_list)
 	{
-		local value = old_list.GetValue(i);
-		new_list.AddItem(value, i);
+		new_list.AddItem(value, key);
 	}
 
 	return new_list;
@@ -155,13 +154,13 @@ function ClueHelper::CopyListSwapValuesAndItems(old_list)
 
 function ClueHelper::GetListMinValue(ai_list)
 {
-	ai_list.Sort(AIAbstractList.SORT_BY_VALUE, true); // highest last
+	ai_list.Sort(AIList.SORT_BY_VALUE, true); // highest last
 	return ai_list.GetValue(ai_list.Begin());
 }
 
 function ClueHelper::GetListMaxValue(ai_list)
 {
-	ai_list.Sort(AIAbstractList.SORT_BY_VALUE, false); // highest first
+	ai_list.Sort(AIList.SORT_BY_VALUE, false); // highest first
 	return ai_list.GetValue(ai_list.Begin());
 }
 

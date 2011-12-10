@@ -181,7 +181,7 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 
 		foreach(cargo_id, _ in cargo_list)
 		{
-			if (AIIndustry.IsCargoAccepted(industry_id, cargo_id) || // is the cargo accepted
+			if (AIIndustry.IsCargoAccepted(industry_id, cargo_id) == AIIndustry.CAS_ACCEPTED || // is the cargo accepted
 				(
 					AIIndustry.GetLastMonthProduction(industry_id, cargo_id) > 0 // or cargo is it produced
 					&&
@@ -763,7 +763,7 @@ function Node::IsCargoAccepted()
 	}
 	else if(this.IsIndustry())
 	{
-		return AIIndustry.IsCargoAccepted(this.industry_id, this.cargo_id);
+		return AIIndustry.IsCargoAccepted(this.industry_id, this.cargo_id) != AIIndustry.CAS_NOT_ACCEPTED;
 	}
 	else
 	{
