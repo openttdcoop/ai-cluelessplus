@@ -2041,13 +2041,15 @@ function Connection::FullLoadAtStations(enable_full_load)
 				local flags = AIOrder.GetOrderFlags(veh, i);
 				if(allow_full_load[node_id])
 				{
-					flags = flags | AIOrder.AIOF_FULL_LOAD; // add the full load flag
+					flags = flags | AIOrder.AIOF_FULL_LOAD_ANY; // add the full load flag
 				}
 				else
 				{
-					if((flags & AIOrder.AIOF_FULL_LOAD) != 0) // if full load flag exists since befare
+					if((flags & AIOrder.AIOF_FULL_LOAD_ANY) != 0 ||  // if full load any flag exists since befare
+						(flags & AIOrder.AIOF_FULL_LOAD) != 0) // also check FULL_LOAD without _ANY, as CluelessPlus <= 32 used that.
 					{
 						flags = flags & ~AIOrder.AIOF_FULL_LOAD; // remove the full load flag
+						flags = flags & ~AIOrder.AIOF_FULL_LOAD_ANY; // remove the full load any flag
 
 						// Make sure vehicles at the station leave the station (otherwise they will keep full-loading until cargo arrives (which could be waiting infinitely long in worst case))
 						local order_dest_tile = AIOrder.GetOrderDestination(veh, i);

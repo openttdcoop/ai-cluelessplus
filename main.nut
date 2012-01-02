@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 17);
+import("util.superlib", "SuperLib", 19);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
