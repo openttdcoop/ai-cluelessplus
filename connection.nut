@@ -191,7 +191,7 @@ function Connection::ReActivateConnection()
 	{
 		if(AIVehicle.GetState(vehicle_id) == AIVehicle.VS_IN_DEPOT)
 		{
-			ClueHelper.StoreInVehicleName(vehicle_id, "active");
+			Data.StoreInVehicleName(vehicle_id, "active");
 			AIVehicle.StartStopVehicle(vehicle_id);
 		}
 	}
@@ -218,7 +218,7 @@ function Connection::SuspendConnection()
 	foreach(vehicle_id, _ in vehicle_list)
 	{
 		// Store state in vehicle so they won't be sold
-		ClueHelper.StoreInVehicleName(vehicle_id, "suspended");
+		Data.StoreInVehicleName(vehicle_id, "suspended");
 	}
 
 	// Make sure vehicles that load at stations skip to depot instead of potentially forever waiting for full load
@@ -257,7 +257,7 @@ function Connection::CloseConnection()
 	foreach(vehicle_id, _ in vehicle_list)
 	{
 		// Store state in vehicles
-		ClueHelper.StoreInVehicleName(vehicle_id, "close conn");
+		Data.StoreInVehicleName(vehicle_id, "close conn");
 	}
 
 	// Make sure vehicles that load at stations skip to depot instead of potentially forever waiting for full load
@@ -419,15 +419,15 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 
 			// Store current state in vehicle name
 			if(this.state == Connection.STATE_SUSPENDED)
-				ClueHelper.StoreInVehicleName(new_bus, "suspended");
+				Data.StoreInVehicleName(new_bus, "suspended");
 			else if(this.state == Connection.STATE_ACTIVE)
-				ClueHelper.StoreInVehicleName(new_bus, "active");
+				Data.StoreInVehicleName(new_bus, "active");
 			else if(this.state == Connection.STATE_CLOSING_DOWN)  // There is not really a reason to buy vehicles in this state!
-				ClueHelper.StoreInVehicleName(new_bus, "close conn");
+				Data.StoreInVehicleName(new_bus, "close conn");
 			else if(this.state == Connection.STATE_BUILDING) 
 			{ }
 			else if(this.state == null) // build state
-				ClueHelper.StoreInVehicleName(new_bus, "active");
+				Data.StoreInVehicleName(new_bus, "active");
 			else
 			{
 				Log.Warning("Built vehicle while in state " + this.state, Log.LVL_INFO);
@@ -1303,7 +1303,7 @@ function Connection::CheckForAirportUpgrade()
 				local veh_list = this.GetVehicles();
 				foreach(veh, _ in veh_list)
 				{
-					ClueHelper.StoreInVehicleName(veh, "ap upgrade");
+					Data.StoreInVehicleName(veh, "ap upgrade");
 				}
 
 				// start upgrading (will not complete it though, if it has to wait on vehicles)
@@ -1347,9 +1347,9 @@ function Connection::TryUpgradeAirports()
 	local veh_list = this.GetVehicles();
 	foreach(veh, _ in veh_list)
 	{
-		if(ClueHelper.ReadStrFromVehicleName(veh) != "ap upgrade")
+		if(Data.ReadStrFromVehicleName(veh) != "ap upgrade")
 		{
-			ClueHelper.StoreInVehicleName(veh, "ap upgrade");
+			Data.StoreInVehicleName(veh, "ap upgrade");
 		}
 	}
 
@@ -1522,7 +1522,7 @@ function Connection::StopAirportUpgrading()
 		if(AIVehicle.IsStoppedInDepot(vehicle_id))
 			AIVehicle.StartStopVehicle(vehicle_id);
 
-		ClueHelper.StoreInVehicleName(vehicle_id, "active");
+		Data.StoreInVehicleName(vehicle_id, "active");
 	}
 
 	Log.Info("done ", Log.LVL_DEBUG);
@@ -1860,7 +1860,7 @@ function Connection::SendVehicleForSelling(vehicle_id)
 
 	Log.Info("Send vehicle " + AIVehicle.GetName(vehicle_id) + " for selling", Log.LVL_INFO);
 
-	ClueHelper.StoreInVehicleName(vehicle_id, "sell");
+	Data.StoreInVehicleName(vehicle_id, "sell");
 
 	// Unshare & clear orders
 	AIOrder.UnshareOrders(vehicle_id);
@@ -2294,7 +2294,7 @@ function Connection::MassUpgradeVehicles()
 			// If in active mode, store "upgrade" in the vehicle name. (in suspended mode we don't want to overwrite "suspended" in vehicle names.
 			// however, they will eventually reach the depot and before un-suspending a connection there is a good moment to mass-upgrade.
 			if(this.state != Connection.STATE_SUSPENDED)
-				ClueHelper.StoreInVehicleName(vehicle_id, "upgrade " + this.desired_engine);
+				Data.StoreInVehicleName(vehicle_id, "upgrade " + this.desired_engine);
 
 			if(!IsVehicleGoingToADepot(vehicle_id)) // make sure to not cancel to-depot orders
 			{
@@ -2312,7 +2312,7 @@ function Connection::MassUpgradeVehicles()
 
 /* static */ function Connection::IsVehicleToldToUpgrade(vehicle_id)
 {
-	local str = ClueHelper.ReadStrFromVehicleName(vehicle_id);
+	local str = Data.ReadStrFromVehicleName(vehicle_id);
 	local u_len = "upgrade".len();
 	if(str.len() < u_len) return false; // Reduces the number of catched errors as those cause big red messages in the log
 	try
@@ -2328,7 +2328,7 @@ function Connection::MassUpgradeVehicles()
 
 /* static */ function Connection::GetVehicleUpgradeToEngine(vehicle_id)
 {
-	local str = ClueHelper.ReadStrFromVehicleName(vehicle_id);
+	local str = Data.ReadStrFromVehicleName(vehicle_id);
 	if(str.slice(0, "upgrade".len()) != "upgrade")
 		return -1;
 

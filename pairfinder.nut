@@ -14,11 +14,17 @@ TRANSPORTED_FACTOR_PERCENT <- 150;
 class PairFinder {
 
 	all_nodes = null;
+	vehicle_type_cargos = null; // table with TM_* as key => list of cargos that VT accepts
+	any_tm_cargoes = null; // => list of cargos than any VT can take
 
 	constructor()
 	{
 		all_nodes = [];
+		vehicle_type_cargos = null;
 	}
+
+	function GetTransportModes(); // a list of transport modes that are allowed to use
+	function UpdateVehicleCargoCapability(); // update member variables for which cargoes each vehicle type can transport
 
 	function AddNodesSorted(connection_list);
 
@@ -41,6 +47,36 @@ class PairFinder {
 	static function ExistingNetworkAreaPreCache(connection_list, desperateness);
 }
 
+function PairFinder::GetTransportModes()
+{
+	// transport modes to try for each pair
+	local try_tm = [];
+	local use_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW;
+	local use_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
+	local use_air_only = !use_road && use_air;
+	if(use_air)
+		try_tm.append(TM_AIR);
+	if(use_road)
+		try_tm.append(TM_ROAD);
+
+	return try_tm;
+}
+function PairFinder::UpdateVehicleCargoCapability()
+{
+	local tm_list = this.GetTransportModes();
+	this.vehicle_type_cargos = {};
+	this.any_tm_cargoes = AIList();
+	foreach(tm in tm_list)
+	{
+		// Get a list of all cargoes that can be transported with current transport mode
+		local available_cargos = AICargoList();
+		available_cargos.Valuate(Engine.DoesEngineExistForCargo, TransportModeToVehicleType(tm), true, true, false);
+		this.vehicle_type_cargos.rawset(tm, available_cargos);
+
+		// Add cargoes to list of cargoes for which there is at least one transport mode that can transport them
+		this.any_tm_cargoes.AddList(available_cargos);
+	}
+}
 function PairFinder::AddNodesSorted(connection_list)
 {
 	//// Get settings ////
@@ -105,10 +141,13 @@ function PairFinder::AddTownNodes(connection_list, node_heap)
 		local accepted_cargo_list = Helper.GetTownAcceptedCargoList();
 
 		// Only consider cargos if there is an engine available to transport it
-		produced_cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
+		produced_cargo_list.KeepList(this.any_tm_cargoes);
+		accepted_cargo_list.KeepList(this.any_tm_cargoes);
+/*		produced_cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
 		produced_cargo_list.KeepValue(1);
 		accepted_cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
 		accepted_cargo_list.KeepValue(1);
+*/
 
 		local cargo_list = AIList();
 
@@ -139,8 +178,9 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 	local cargo_list = AICargoList();
 
 	// Only consider cargos if there is an engine available to transport it
-	cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
-	cargo_list.KeepValue(1);
+	cargo_list.KeepList(this.any_tm_cargoes);
+/*	cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
+	cargo_list.KeepValue(1);*/
 
 	Log.Info("cargo_list size: " + cargo_list.Count(), Log.LVL_DEBUG);
 
@@ -197,6 +237,9 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 
 function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 {
+	// Rebuild cargo/vehicle availability
+	this.UpdateVehicleCargoCapability();
+
 	// Rebuild the list of nodes
 	this.AddNodesSorted(connection_list);
 	Log.Info("a total of " + all_nodes.len() + " nodes has been added", Log.LVL_SUB_DECISIONS);
@@ -230,6 +273,9 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 		airport_noise = airport_type_list.GetValue(airport_type_list.Begin());
 	}
 
+	local aircraft_cargos = AICargoList();
+	aircraft_cargos.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_AIR);
+	aircraft_cargos.KeepValue(1);
 
 	// Get the ideal length
 
@@ -326,14 +372,35 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 			foreach(tm in try_tm)
 			{
 				// At the moment, only town to town connections can be made via aircraft
-				if(tm == TM_AIR && (!dest_node.IsTown() || !source_node.IsTown()))
-					continue;
+			//	if(tm == TM_AIR && (!dest_node.IsTown() || !source_node.IsTown()))
+			//		continue;
 
-				// check that town connections allow airport noise
-				local budget_overrun = GetNoiseBudgetOverrun();
-				if(AITown.GetAllowedNoise(source_node.town_id) + budget_overrun < airport_noise 
-						|| AITown.GetAllowedNoise(dest_node.town_id) + budget_overrun < airport_noise)
-					continue;
+				if(tm == TM_AIR)
+				{
+					// Don't use aircraft if there is no aircraft that
+					// takes the given cargo
+					if(!aircraft_cargos.HasItem(source_node.cargo_id))
+						continue;
+
+					local budget_overrun = GetNoiseBudgetOverrun();
+					local dest_airport_noise = airport_noise;
+					local source_airport_noise = airport_noise;
+				   	if (dest_node.IsIndustry())
+					{
+						local dist = AIMap.DistanceManhattan(dest_node.GetLocation(), AITown.GetLocation(dest_node.GetClosestTown()))
+						dest_airport_noise /= (dist / 4);
+					}
+					if(source_node.IsIndustry())
+					{
+						local dist = AIMap.DistanceManhattan(source_node.GetLocation(), AITown.GetLocation(source_node.GetClosestTown()))
+						source_airport_noise /= (dist / 4);
+					}
+
+					// check that connections allow airport noise
+					if(AITown.GetAllowedNoise(source_node.GetClosestTown()) + budget_overrun < dest_airport_noise 
+							|| AITown.GetAllowedNoise(dest_node.GetClosestTown()) + budget_overrun < source_airport_noise)
+						continue;
+				}
 
 				local dist_deviation = Helper.Abs(g_tm_stats[tm].ideal_construct_distance - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
 

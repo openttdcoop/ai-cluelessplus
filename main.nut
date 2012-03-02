@@ -23,11 +23,12 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 19);
+import("util.superlib", "SuperLib", 21);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
 Helper <- SuperLib.Helper;
+Data <- SuperLib.DataStore;
 ScoreList <- SuperLib.ScoreList;
 Money <- SuperLib.Money;
 
@@ -193,7 +194,7 @@ function GetVehiclesWithUpgradeStatus()
 
 function GetCargoFromStation(station_id)
 {
-	local save_str = ClueHelper.ReadStrFromStationName(station_id);
+	local save_str = Data.ReadStrFromStationName(station_id);
 	local space = save_str.find(" ");
 	local save_version = -1;
 	local node_save_str = null;
@@ -282,7 +283,7 @@ function IsAirportTypeBetterThan(ap_type, other_ap_type)
 
 function IsAircraftDumpStation(station_id)
 {
-	local save_str = ClueHelper.ReadStrFromStationName(station_id);
+	local save_str = Data.ReadStrFromStationName(station_id);
 	local space = save_str.find(" ");
 	local save_version = -1;
 	local node_save_str = null;
@@ -395,7 +396,7 @@ function GetAircraftDumpAirport(need_large_airport)
 		else
 			g_aircraft_dump_airport_large = station_id;
 
-		ClueHelper.StoreInStationName(station_id, STATION_SAVE_VERSION + " " + STATION_SAVE_AIRCRAFT_DUMP);
+		Data.StoreInStationName(station_id, STATION_SAVE_VERSION + " " + STATION_SAVE_AIRCRAFT_DUMP);
 
 		return station_id;
 	}
@@ -999,7 +1000,7 @@ function CluelessPlus::SendLostVehicleForSelling(vehicle_id)
 			AIOrder.RemoveOrder(vehicle_id, 0);
 		}
 
-		ClueHelper.StoreInVehicleName(vehicle_id, "sell");
+		Data.StoreInVehicleName(vehicle_id, "sell");
 
 		if(!AIVehicle.IsStoppedInDepot(vehicle_id))
 			AIVehicle.SendVehicleToDepot(vehicle_id);
@@ -1020,7 +1021,7 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 		Log.Info("num vehicles stopped in depot: " + to_sell_in_depot.Count(), Log.LVL_SUB_DECISIONS);
 		foreach(i, _ in to_sell_in_depot)
 		{
-			local veh_state = ClueHelper.ReadStrFromVehicleName(i);
+			local veh_state = Data.ReadStrFromVehicleName(i);
 
 			// Don't sell suspended / active vehicles, or vehicles waiting for airport upgrade
 			if(veh_state == "suspended" || veh_state == "active" || veh_state == "ap upgrade")
@@ -1057,7 +1058,7 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 							{
 								// Upgrade succeeded
 								AIOrder.ShareOrders(veh, i);
-								ClueHelper.StoreInVehicleName(veh, "active");
+								Data.StoreInVehicleName(veh, "active");
 								AIVehicle.StartStopVehicle(veh);
 								AIVehicle.SellVehicle(i);
 								continue;
@@ -1090,7 +1091,7 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 								{
 									// Upgrade succeeded
 									AIOrder.ShareOrders(veh, shared_orders_group.Begin());
-									ClueHelper.StoreInVehicleName(veh, "active");
+									Data.StoreInVehicleName(veh, "active");
 									AIVehicle.StartStopVehicle(veh);
 									continue;
 								}
@@ -1110,7 +1111,7 @@ function CluelessPlus::CheckDepotsForStopedVehicles()
 				Log.Warning("Buying of new vehicle failed -> return vehicle to active state", Log.LVL_INFO);
 				Log.Info("depot: " + Tile.GetTileString(depot), Log.LVL_INFO);
 				Log.Info("engine: " + engine + " = " + AIEngine.GetName(engine), Log.LVL_INFO);
-				ClueHelper.StoreInVehicleName(i, "active");
+				Data.StoreInVehicleName(i, "active");
 				AIVehicle.StartStopVehicle(i);
 
 				continue;
@@ -1658,10 +1659,10 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 					break;
 
 				case TM_AIR:
-					station_tile = Airport.BuildAirportForIndustry(airport_type, node.industry_id, node.cargo_id);
+					station_tile = Airport.BuildAirportForIndustry(airport_type, node.industry_id);
 
 					if (station_tile == null)
-						Log.Warning("failed to build airport in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
+						Log.Warning("failed to build airport for industry " + AIIndustry.GetName(node.industry_id), Log.LVL_INFO);
 					else
 						depot_tile = Airport.GetHangarTile(AIStation.GetStationID(station_tile));
 					break;
@@ -1729,7 +1730,7 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 	foreach(station_tile in connection.station)
 	{
 		Log.Info("assign name to " + AIStation.GetName(AIStation.GetStationID(station_tile)), Log.LVL_DEBUG);
-		ClueHelper.StoreInStationName(AIStation.GetStationID(station_tile), STATION_SAVE_VERSION + " " + pair[i].SaveToString());
+		Data.StoreInStationName(AIStation.GetStationID(station_tile), STATION_SAVE_VERSION + " " + pair[i].SaveToString());
 		++i;
 	}
 
@@ -1903,7 +1904,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	{
 		local station_id = AIStation.GetStationID(station_tile);
 
-		local save_str = ClueHelper.ReadStrFromStationName(station_id);
+		local save_str = Data.ReadStrFromStationName(station_id);
 		local space = save_str.find(" ");
 		local save_version = -1;
 		local node_save_str = null;
@@ -1958,7 +1959,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 			node = Node(town_id, industry_id, cargo_id);
 
 			// Update the station name to be compatible with the current storage method
-			ClueHelper.StoreInStationName(station_id, STATION_SAVE_VERSION + " " + node.SaveToString());
+			Data.StoreInStationName(station_id, STATION_SAVE_VERSION + " " + node.SaveToString());
 		}
 
 		connection.town.append(node.town_id);
@@ -1984,7 +1985,7 @@ function CluelessPlus::ReadConnectionFromVehicle(vehId)
 	local sell_count = 0;
 	foreach(veh_id, _ in group)
 	{
-		local state = ClueHelper.ReadStrFromVehicleName(veh_id);
+		local state = Data.ReadStrFromVehicleName(veh_id);
 
 		if(state == "active")
 			active_count++;
