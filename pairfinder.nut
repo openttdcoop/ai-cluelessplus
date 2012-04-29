@@ -112,8 +112,14 @@ function PairFinder::AddNodesSorted(connection_list)
 	}
 	if(allowed_connection_types == 1 || allowed_connection_types == 2)
 	{
-		Log.Info("connect industries", Log.LVL_DEBUG);
-		AddIndustryNodes(connection_list, node_heap);
+		// Temporarily code to require road for industry nodes for this release as the ongoing work to support aircraft
+		// at industries is not good enough yet
+		local use_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
+		if(use_road)
+		{
+			Log.Info("connect industries", Log.LVL_DEBUG);
+			AddIndustryNodes(connection_list, node_heap);
+		}
 	}
 
 	//// Move nodes to Squirrel List ////
@@ -371,10 +377,6 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 			local possible_tms = [];
 			foreach(tm in try_tm)
 			{
-				// At the moment, only town to town connections can be made via aircraft
-			//	if(tm == TM_AIR && (!dest_node.IsTown() || !source_node.IsTown()))
-			//		continue;
-
 				if(tm == TM_AIR)
 				{
 					// Don't use aircraft if there is no aircraft that
@@ -388,12 +390,12 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 				   	if (dest_node.IsIndustry())
 					{
 						local dist = AIMap.DistanceManhattan(dest_node.GetLocation(), AITown.GetLocation(dest_node.GetClosestTown()))
-						dest_airport_noise /= (dist / 4);
+						dest_airport_noise /= max(1, (dist / 4));
 					}
 					if(source_node.IsIndustry())
 					{
 						local dist = AIMap.DistanceManhattan(source_node.GetLocation(), AITown.GetLocation(source_node.GetClosestTown()))
-						source_airport_noise /= (dist / 4);
+						source_airport_noise /= max(1, (dist / 4));
 					}
 
 					// check that connections allow airport noise
@@ -404,13 +406,13 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 
 				local dist_deviation = Helper.Abs(g_tm_stats[tm].ideal_construct_distance - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
 
-				if (dist > g_tm_stats[tm].max_construct_distance)
+				if (dist > g_tm_stats[tm].max_construct_distance * max(2, desperateness * 2) / 2)
 					continue;
 
-				if (dist_deviation > g_tm_stats[tm].max_construct_distance_deviation)
+				if (dist_deviation > g_tm_stats[tm].max_construct_distance_deviation * max(2, desperateness * 2) / 2)
 					continue;
 
-				if (dist < g_tm_stats[tm].min_construct_distance)
+				if (dist < g_tm_stats[tm].min_construct_distance * 2 / max(2, desperateness * 2 - 1))
 					continue;
 
 				// The pair can be connected using transport_mode

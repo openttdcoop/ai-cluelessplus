@@ -1858,54 +1858,7 @@ function Connection::SendVehicleForSelling(vehicle_id)
 	if(!AIVehicle.IsValidVehicle(vehicle_id))
 		return;
 
-	Log.Info("Send vehicle " + AIVehicle.GetName(vehicle_id) + " for selling", Log.LVL_INFO);
-
-	Data.StoreInVehicleName(vehicle_id, "sell");
-
-	// Unshare & clear orders
-	AIOrder.UnshareOrders(vehicle_id);
-	while(AIOrder.GetOrderCount(vehicle_id) > 0)
-	{
-		AIOrder.RemoveOrder(vehicle_id, 0);
-	}
-
-	// Check if it is already in a depot
-	if(AIVehicle.IsStoppedInDepot(vehicle_id))
-		return;
-
-	if(AIRoad.IsRoadDepotTile(depot[0])) 
-	{
-		// Send vehicle to specific depot so it don't get lost
-		if(AIOrder.AppendOrder(vehicle_id, depot[0], AIOrder.AIOF_STOP_IN_DEPOT))
-		{
-			// Add an extra order so we can skip between the orders to fully make sure vehicles leave
-			// stations they previously were full loading at.
-			AIOrder.AppendOrder(vehicle_id, depot[0], AIOrder.AIOF_STOP_IN_DEPOT);
-
-			// so that vehicles that load stuff departures
-			AIOrder.SkipToOrder(vehicle_id, 1); 
-			AIOrder.SkipToOrder(vehicle_id, 0); 
-
-			// Remove the second now unneccesary order
-			AIOrder.RemoveOrder(vehicle_id, 1);
-		}
-	}
-	else
-	{
-		// depot[0] has been destroyed
-		AIVehicle.SendVehicleToDepot(vehicle_id);
-	}
-
-	// Turn around road vehicles that stand still, possible in queues.
-	if(AIVehicle.GetVehicleType(vehicle_id) == AIVehicle.VT_ROAD)
-	{
-		if(AIVehicle.GetCurrentSpeed(vehicle_id) == 0)
-		{
-			Log.Info("Turn aronud vehicle that was sent for selling since speed is zero and it might be stuck in a queue.", Log.LVL_DEBUG);
-			Helper.SetSign(AIVehicle.GetLocation(vehicle_id), "turn");
-			AIVehicle.ReverseVehicle(vehicle_id);
-		}
-	}
+	Vehicle.SendVehicleToDepotForSelling(vehicle_id, depot[0], "sell");
 
 	this.last_bus_sell = AIDate.GetCurrentDate();
 }

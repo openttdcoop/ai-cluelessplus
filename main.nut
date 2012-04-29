@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 21);
+import("util.superlib", "SuperLib", 24);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -50,7 +50,8 @@ Road <- SuperLib.Road;
 RoadBuilder <- SuperLib.RoadBuilder;
 
 // Import other libraries
-import("queue.fibonacci_heap", "FibonacciHeap", 2);
+import("queue.fibonacci_heap", "FibonacciHeap", 3);
+//require("fibonacciheap.nut");
 
 // Import all CluelessPlus files
 require("pairfinder.nut"); 
@@ -1586,6 +1587,7 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		}
 	}
 
+	local failed = false; // to break out of the foreach if first node failed
 	foreach(node in pair)
 	{
 		local station_tile = null;
@@ -1623,7 +1625,10 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 							if (station_tile != null)
 								depot_tile = Road.BuildDepotNextToRoad(Road.GetRoadStationFrontTile(station_tile), 0, 100);
 							else
+							{
 								Log.Warning("failed to build bus/truck stop in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
+								failed = true;
+							}
 						}
 					}
 					break;
@@ -1633,7 +1638,10 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 					station_tile = Airport.BuildAirportInTown(node.town_id, airport_type, accept_cargo, produce_cargo);
 
 					if (station_tile == null)
+					{
 						Log.Warning("failed to build airport in town " + AITown.GetName(node.town_id), Log.LVL_INFO);
+						failed = true;
+					}
 					else
 					{
 						Log.Warning("Built airport in town: " + AITown.GetName(node.town_id), Log.LVL_SUB_DECISIONS);
@@ -1656,13 +1664,18 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 					
 					if (station_tile != null)
 						depot_tile = Road.BuildDepotNextToRoad(Road.GetRoadStationFrontTile(station_tile), 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
+					else
+						failed = true;
 					break;
 
 				case TM_AIR:
 					station_tile = Airport.BuildAirportForIndustry(airport_type, node.industry_id);
 
 					if (station_tile == null)
+					{
 						Log.Warning("failed to build airport for industry " + AIIndustry.GetName(node.industry_id), Log.LVL_INFO);
+						failed = true;
+					}
 					else
 						depot_tile = Airport.GetHangarTile(AIStation.GetStationID(station_tile));
 					break;
@@ -1676,16 +1689,18 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		// Append null if the station tile is invalid
 		connection.station.append(station_tile);
 		connection.depot.append(depot_tile);
+
+		if(failed)
+			break;
 	}
 
 	// Check that we built all buildings
-	local fail = false;
 	foreach(station in connection.station)
 	{
 		if(station == null || !AIMap.IsValidTile(station))
 		{
 			Log.Info("failed to build stations = true", Log.LVL_INFO);
-			fail = true;
+			failed = true;
 		}
 	}
 	foreach(depot in connection.depot)
@@ -1693,17 +1708,18 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		if(depot == null || !AIMap.IsValidTile(depot))
 		{
 			Log.Info("failed to build depots = true", Log.LVL_INFO);
-			fail = true;
+			failed = true;
 		}
 	}
 
 	// Remove stations/depots that were built, if not all succeeded
-	if(fail)
+	if(failed)
 	{
 		foreach(station in connection.station)
 		{
 			if(station != null && AIMap.IsValidTile(station))
 			{
+				Log.Info("demolish station as something failed", Log.LVL_DEBUG);
 				local station_id = AIStation.GetStationID(station);
 				Station.DemolishStation(station_id);
 			}
@@ -1712,6 +1728,7 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		{
 			if(depot != null && AIMap.IsValidTile(depot))
 			{
+				Log.Info("demolish road depot as something failed", Log.LVL_DEBUG);
 				local front = AIRoad.GetRoadDepotFrontTile(depot);
 				AITile.DemolishTile(depot);
 				AIRoad.RemoveRoad(front, depot);
