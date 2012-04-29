@@ -51,7 +51,6 @@ RoadBuilder <- SuperLib.RoadBuilder;
 
 // Import other libraries
 import("queue.fibonacci_heap", "FibonacciHeap", 3);
-//require("fibonacciheap.nut");
 
 // Import all CluelessPlus files
 require("pairfinder.nut"); 
