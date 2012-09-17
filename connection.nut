@@ -662,7 +662,7 @@ function Connection::ManageState()
 
 			if(max_production > 0)
 			{
-				if(zero_secondary_production || zero_secondary_production)
+				if(zero_secondary_production || zero_raw_production)
 				{
 					// Dual way connection where one node has zero production
 
