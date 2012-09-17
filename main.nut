@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 24);
+import("util.superlib", "SuperLib", 26);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -1405,7 +1405,7 @@ function CluelessPlus::ConnectPair(budget)
 			{
 				local front = AIRoad.GetRoadDepotFrontTile(connection.depot[i]);
 				AITile.DemolishTile(connection.depot[i]);
-				AIRoad.RemoveRoad(front, connection.depot[i]);
+				Road.RemoveRoadInfrontOfRemovedRoadStopOrDepot(connection.depot[i], front);
 
 				front_tiles.AddItem(front, 0);
 
@@ -1660,7 +1660,7 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 					station_tile = Road.BuildStopForIndustry(node.industry_id, node.cargo_id);
 					if (!AIStation.IsValidStation(AIStation.GetStationID(station_tile))) // for compatibility with the old code, turn -1 into null
 						station_tile = null;
-					
+
 					if (station_tile != null)
 						depot_tile = Road.BuildDepotNextToRoad(Road.GetRoadStationFrontTile(station_tile), 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
 					else
@@ -1714,24 +1714,36 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 	// Remove stations/depots that were built, if not all succeeded
 	if(failed)
 	{
+		local front_tiles = AIList();
+
+		Log.Info("Boooo", Log.LVL_INFO);
 		foreach(station in connection.station)
 		{
 			if(station != null && AIMap.IsValidTile(station))
 			{
 				Log.Info("demolish station as something failed", Log.LVL_DEBUG);
 				local station_id = AIStation.GetStationID(station);
+				front_tiles.AddList(Station.GetRoadFrontTiles(station_id));
 				Station.DemolishStation(station_id);
 			}
 		}
+		Log.Info("Boooo", Log.LVL_INFO);
 		foreach(depot in connection.depot)
 		{
 			if(depot != null && AIMap.IsValidTile(depot))
 			{
 				Log.Info("demolish road depot as something failed", Log.LVL_DEBUG);
 				local front = AIRoad.GetRoadDepotFrontTile(depot);
+				front_tiles.AddItem(front, 0);
 				AITile.DemolishTile(depot);
-				AIRoad.RemoveRoad(front, depot);
+				Road.RemoveRoadInfrontOfRemovedRoadStopOrDepot(depot, front);
 			}
+		}
+		Log.Info("Boooo", Log.LVL_INFO);
+
+		foreach(front_tile, _ in front_tiles)
+		{
+			Road.RemoveRoadUpToRoadCrossing(front_tile);
 		}
 
 		Log.Info("Demolished failed stn + depot", Log.LVL_DEBUG);
