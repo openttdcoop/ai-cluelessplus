@@ -58,6 +58,8 @@ class Connection
 
 	state = null;
 	state_change_date = null;
+
+	zero_production_detected_date = null;
 	
 	constructor(clueless_instance) {
 		this.clueless_instance = clueless_instance;
@@ -85,6 +87,7 @@ class Connection
 		this.airport_upgrade_list = null;
 		this.airport_upgrade_failed = null;
 		this.airport_upgrade_start = null;
+		this.zero_production_detected_date = 0;
 	}
 
 	function GetName();
@@ -670,6 +673,10 @@ function Connection::ManageState()
 					// The function will only full load at the end with highest production so that will solve the issue
 					this.FullLoadAtStations(true);
 				}
+
+				// Unset the date when zero production was detected
+				this.zero_production_detected_date = 0;
+
 			}
 			else
 			{
@@ -677,29 +684,42 @@ function Connection::ManageState()
 
 				if(zero_secondary_production)
 				{
-					// One of the producing nodes is a non-raw node -> suspend connection for a while
-					// and hope that the industry will start produce cargo again
-
-					// However, if the stations are not much in use, it is better to keep the connection
-					// active to not cause bad station ratings.
-					local check = false;
-					switch(this.transport_mode)
+					// Set the date when zero production was detected if not set
+					if(this.zero_production_detected_date == 0)
 					{
-						case TM_ROAD:
-							check = this.max_station_usage > 135 || this.max_station_tile_usage > 180;
-							break;
-
-						case TM_RAIL:
-							check = this.max_station_usage > 135; // tweak
-							break;
-
-						default:
-							check = false;
+						this.zero_production_detected_date = AIDate.GetCurrentDate();
 					}
-
-					if(check)
+					// If there have been zero production for more than 90 days, close the connection
+					else if(this.zero_production_detected_date + 90 < AIDate.GetCurrentDate())
 					{
-						this.SuspendConnection();
+						this.CloseConnection();
+					}
+					else
+					{
+						// One of the producing nodes is a non-raw node -> suspend connection for a while
+						// and hope that the industry will start produce cargo again
+
+						// However, if the stations are not much in use, it is better to keep the connection
+						// active to not cause bad station ratings.
+						local check = false;
+						switch(this.transport_mode)
+						{
+							case TM_ROAD:
+								check = this.max_station_usage > 135 || this.max_station_tile_usage > 180;
+								break;
+
+							case TM_RAIL:
+								check = this.max_station_usage > 135; // tweak
+								break;
+
+							default:
+								check = false;
+						}
+
+						if(check)
+						{
+							this.SuspendConnection();
+						}
 					}
 				}
 				else if(zero_raw_production)
