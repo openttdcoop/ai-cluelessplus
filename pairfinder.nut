@@ -493,7 +493,14 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 	// Get the best pair of the best
 	local best_pair = global_best_pairs.Pop();
 	if(best_pair == null)
+	{
+		// Failed to find a connection => remove a failed connection
+
+		// Remove out dated failed connections
+		Node.RemoveOldFailedConnections(connection_list, /* min age: */ 5 * 365, /* min num: */ 1);
+
 		return null;
+	}
 
 	Log.Info("top-list: ", Log.LVL_DEBUG);
 	Log.Info(best_pair[0].GetName() + " - " + best_pair[1].GetName() + " using " + TransportModeToString(best_pair[3]) + " => score: " + best_pair[2], Log.LVL_DEBUG);
@@ -667,6 +674,8 @@ class Node {
 
 	static function IsNodeInConnectionList(connection_list, node);
 	static function FindNodePairInConnectionList(connection_list, node1, node2); // returns the matching connection object or null
+
+	static function RemoveOldFailedConnections(connection_list, min_age, min_num); // remove old failed connections so that a new attempt can be made
 }
 
 function Node::IsEqualTo(node)
@@ -965,6 +974,74 @@ function Node::SaveToString()
 		}
 	}
 	return null;
+}
+
+function ConnectionBuiltDateSorter(c1, c2)
+{
+	local c1_date = c1.date_built;
+	local c2_date = c2.date_built;
+
+	if(c1_date > c2_date) return 1;
+	else if(c1_date < c2_date) return -1;
+	return 0;
+}
+
+/* static */ function Node::RemoveOldFailedConnections(connection_list, min_age, min_num)
+{
+	Log.Info("Remove old failed connections.  min age: " + min_age + "  min num: " + min_num, Log.LVL_SUB_DECISIONS);
+
+	// a list of failed connections
+	local failed_list = [];
+
+	Log.Info("Failed connections: (before removal)", Log.LVL_DEBUG);
+	foreach(connection in connection_list)
+	{
+		if(connection.node.len() != 2)
+			KABOOOM_CONNECTION_LENGTH_IS_NOT_TWO();
+
+		if(connection.state == Connection.STATE_FAILED ||
+				connection.state == Connection.STATE_CLOSED_DOWN)
+		{
+			failed_list.append(connection);
+			Log.Info(connection.GetName() + " - built: " + connection.date_built, Log.LVL_DEBUG);
+		}
+	}
+
+	failed_list.sort(ConnectionBuiltDateSorter);
+	local num = 0;
+	local day_now = AIDate.GetCurrentDate();
+	foreach(connection in failed_list)
+	{
+		// Is done?
+		if(day_now - connection.date_built < min_age && num >= min_num)
+			return;
+
+		// No - remove this failed connection from the connection_list
+		// and thus make its nodes available again for new connection
+		// tries.
+
+		// find index of connection in connection_list and remove it
+		foreach(idx, c in connection_list)
+		{
+			if(c == connection)
+			{
+				Log.Info("Remove connection " + connection.GetName(), Log.LVL_SUB_DECISIONS);
+				connection_list.remove(idx);
+				break;
+			}
+		}
+	}
+
+	Log.Info("Failed connections: (after removal)", Log.LVL_DEBUG);
+	foreach(connection in connection_list)
+	{
+		if(connection.state == Connection.STATE_FAILED ||
+				connection.state == Connection.STATE_CLOSED_DOWN)
+		{
+			Log.Info(connection.GetName() + " - built: " + connection.date_built, Log.LVL_DEBUG);
+		}
+	}
+	Log.Info("Failed connections removal DONE", Log.LVL_DEBUG);
 }
 
 /*
