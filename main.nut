@@ -1524,7 +1524,7 @@ function CluelessPlus::BuildHQ()
 	}
 }
 
-function CluelessPlus::ConstructStationAndDepots(pair, connection)
+function CluelessPlus::ConstructStationAndDepots(pair, connection, retry = false)
 {
 	if(connection.transport_mode == null)
 		return false;
@@ -1573,12 +1573,27 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 		local magic_dtrs_allowed = AIController.GetSetting("enable_magic_dtrs");
 		if(magic_dtrs_allowed)
 		{
-			// See if the desired engine is articulated or not
-			local rv_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_ROAD, false, magic_dtrs_allowed);
+			if(retry)
+			{
+				// If this is a retry (possible due to failed magic DTRS placement), have a look if there is a
+				// non-articulated engine to use instead and place non-dtrs stops.
+				local articulated = false;
+				local rv_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_ROAD, false, articulated);
 
-			// Use the magic DTRS only when we get an articulated engine
-			use_magic_dtrs = AIEngine.IsArticulated(rv_engine) ||
-				AIBase.RandRange(6) < 1; // or at one time in 6, use dtrs anyway just for some randomization (and higher chance of finding bugs :-D )
+				if(AIEngine.IsValidEngine(rv_engine))
+					use_magic_dtrs = false;
+				else
+					return false; // no need to try to place magic DTRS twice.
+			}
+			else
+			{
+				// See if the desired engine is articulated or not
+				local rv_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_ROAD, false, magic_dtrs_allowed);
+
+				// Use the magic DTRS only when we get an articulated engine
+				use_magic_dtrs = AIEngine.IsArticulated(rv_engine) ||
+					AIBase.RandRange(6) < 1; // or at one time in 6, use dtrs anyway just for some randomization (and higher chance of finding bugs :-D )
+			}
 		}
 		else
 		{
@@ -1662,7 +1677,16 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 						station_tile = null;
 
 					if (station_tile != null)
+					{
+						// Check the site infront of the station. If the road is sloped, the only possible depot location will
+						// make the station+depot impossible to connect.
+
+						if(!use_magic_dtrs)
+							Road.FixRoadStopFront(station_tile);
+
+
 						depot_tile = Road.BuildDepotNextToRoad(Road.GetRoadStationFrontTile(station_tile), 0, 100); // TODO, for industries there is only a road stump so chances are high that this fails
+					}
 					else
 						failed = true;
 					break;
@@ -1746,7 +1770,17 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection)
 			Road.RemoveRoadUpToRoadCrossing(front_tile);
 		}
 
+		connection.station = [];
+		connection.depot = [];
+
 		Log.Info("Demolished failed stn + depot", Log.LVL_DEBUG);
+
+		// Retry once if road stations failed
+		if(!retry && connection.transport_mode == TM_ROAD)
+		{
+			Log.Info("Retry station and depot construction", Log.LVL_DEBUG);
+			return this.ConstructStationAndDepots(pair, connection, true);
+		}
 
 		return false;
 	}
