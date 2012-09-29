@@ -236,6 +236,11 @@ function Connection::CloseConnection()
 {
 	Log.Info("CloseConnection " + node[0].GetName() + " - " + node[1].GetName(), Log.LVL_INFO);
 
+	if(this.transport_mode == TM_AIR)
+	{
+		//AIController.Break("close air connection");
+	}
+
 	if(this.state == Connection.STATE_CLOSING_DOWN || this.state == Connection.STATE_CLOSED_DOWN || this.state == Connection.STATE_FAILED)
 	{
 		Log.Warning("CloseConnection fails because the current state ( " + this.state + " ) of the connection does not allow initiating the closing down process.");
@@ -767,6 +772,11 @@ function Connection::ManageState()
 	}
 	else if(this.state == Connection.STATE_CLOSING_DOWN)
 	{
+		if(this.transport_mode == TM_AIR)
+		{
+			//AIController.Break("close air connection");
+		}
+
 		local vehicle_list = this.GetVehicles();
 
 		// Sell vehicles in depot
@@ -783,6 +793,7 @@ function Connection::ManageState()
 		if(vehicle_list.IsEmpty())
 		{
 			// All vehicles has been sold
+			Log.Info("close con: All vehicles have been sold.", Log.LVL_DEBUG);
 
 			local front_tiles = AIList();
 
@@ -796,7 +807,8 @@ function Connection::ManageState()
 				local station_id = AIStation.GetStationID(station_tile);
 
 				// Remember the front tiles for later road removal 
-				front_tiles.AddList(Station.GetRoadFrontTiles(station_id));
+				if(this.transport_mode == TM_ROAD)
+					front_tiles.AddList(Station.GetRoadFrontTiles(station_id));
 
 				// Demolish station
 				Station.DemolishStation(station_id);
@@ -808,10 +820,14 @@ function Connection::ManageState()
 				if(depot == null) continue;
 
 				Helper.SetSign(depot, "close conn");
-				local front = AIRoad.GetRoadDepotFrontTile(depot);
+				local front = null;
+				if(this.transport_mode == TM_ROAD)
+				{
+					front = AIRoad.GetRoadDepotFrontTile(depot);
 
-				// Remember the front tile for later road removal
-				front_tiles.AddItem(front, 0);
+					// Remember the front tile for later road removal
+					front_tiles.AddItem(front, 0);
+				}
 
 				// Demolish depot
 				if(AIRoad.IsRoadDepotTile(depot) && !AITile.DemolishTile(depot))
@@ -863,7 +879,9 @@ function Connection::ManageState()
 						return;
 					}
 				}
-				AIRoad.RemoveRoad(front, depot);
+
+				if(this.transport_mode == TM_ROAD)
+					AIRoad.RemoveRoad(front, depot);
 			}
 
 			// debug signs
@@ -873,9 +891,12 @@ function Connection::ManageState()
 			}
 
 			// Remove road from all front tiles
-			foreach(tile, _ in front_tiles)
+			if(this.transport_mode == TM_ROAD)
 			{
-				Road.RemoveRoadUpToRoadCrossing(tile);
+				foreach(tile, _ in front_tiles)
+				{
+					Road.RemoveRoadUpToRoadCrossing(tile);
+				}
 			}
 
 			Log.Info("Change state to STATE_CLOSED_DOWN");
