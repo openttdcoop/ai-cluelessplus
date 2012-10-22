@@ -357,7 +357,12 @@ function Connection::FindEngineModelToBuy()
 {
 	local has_small_airport = this.HasSmallAirport();
 	local allow_articulated_rvs = this.HasMagicDTRSStops();
-	return Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), has_small_airport, allow_articulated_rvs);
+	local min_range = -1;
+	if(this.transport_mode == TM_AIR)
+	{
+		min_range = AIOrder.GetOrderDistance(AIVehicle.VT_AIR, this.station[0], this.station[1]);
+	}
+	return Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), has_small_airport, allow_articulated_rvs, min_range);
 }
 function Connection::BuyVehicles(num_vehicles, engine_id)
 {
@@ -1206,8 +1211,9 @@ function Connection::CheckForAirportUpgrade()
 		{
 			// Get best engine, also including large aircrafts
 			local articulated_rvs = false;
-			local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), false, articulated_rvs); 
-			if(AIEngine.GetPlaneType(best_engine) == AIAirport.PT_BIG_PLANE)
+			local min_range = AIOrder.GetOrderDistance(AIVehicle.VT_AIR, this.station[0], this.station[1]);
+			local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), false, articulated_rvs, min_range); 
+			if(AIEngine.IsValidEngine(best_engine) && AIEngine.GetPlaneType(best_engine) == AIAirport.PT_BIG_PLANE)
 			{
 				// best engine is a large aircraft
 
@@ -1449,7 +1455,16 @@ function Connection::TryUpgradeAirports()
 			produce_cargo = upgrade.node.cargo_id;
 
 		local station_id = AIStation.GetStationID(upgrade.airport_tile);
-		local result = Airport.UpgradeAirportInTown(upgrade.node.GetClosestTown(), station_id, upgrade.to_type_list, accept_cargo, produce_cargo);
+		local result = false;
+		if(upgrade.node.IsTown())
+		{
+			result = Airport.UpgradeAirportInTown(upgrade.node.GetClosestTown(), station_id, upgrade.to_type_list, accept_cargo, produce_cargo);
+		}
+		else
+		{
+			Log.Info("Upgrade Industry airport", Log.LVL_INFO);
+			result = Airport.UpgradeAirportForIndustry(upgrade.node.industry_id, station_id, upgrade.to_type_list, accept_cargo, produce_cargo);
+		}
 		if(Result.IsSuccess(result))
 		{
 			// Update station tile
@@ -1813,11 +1828,18 @@ function Connection::ManageVehicles()
 					// Buy a new vehicle
 					Log.Info("Manage vehicles: decided to Buy a new bus", Log.LVL_INFO);
 					local engine = this.FindEngineModelToBuy();
-					local num = 1 + (max_waiting - waiting_limit) / buy_size; // if buy reason is low rating, only one vehicle is bought
-					if(num < 1)
-						num = 1;
-					num = Helper.Min(num, 5); // Don't buy more than 5 at a time
-					BuyVehicles(num, engine);
+					if(AIEngine.IsValidEngine(engine))
+					{
+						local num = 1 + (max_waiting - waiting_limit) / buy_size; // if buy reason is low rating, only one vehicle is bought
+						if(num < 1)
+							num = 1;
+						num = Helper.Min(num, 5); // Don't buy more than 5 at a time
+						BuyVehicles(num, engine);
+					}
+					else
+					{
+						Log.Warning("Couldn't find an engine to buy!", Log.LVL_INFO);
+					}
 				}
 			}
 		}
@@ -2191,9 +2213,21 @@ function Connection::RepairRoadConnection()
 
 function Connection::FindNewDesiredEngineType()
 {
+	Log.Info("Find new desired engine", Log.LVL_DEBUG);
 	local small_airport = this.HasSmallAirport();
 	local articulated_rvs = this.HasMagicDTRSStops();
-	local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), small_airport, articulated_rvs); 
+	local min_range = -1;
+	if(this.transport_mode == TM_AIR)
+	{
+		min_range = AIOrder.GetOrderDistance(AIVehicle.VT_AIR, this.station[0], this.station[1]);
+	}
+	local best_engine = Strategy.FindEngineModelToBuy(this.cargo_type, TransportModeToVehicleType(this.transport_mode), small_airport, articulated_rvs, min_range); 
+
+	if(!AIEngine.IsValidEngine(best_engine))
+	{
+		Log.Warning("FindNewDesiredEngineType: Failed to find an engine that works for this connection!");
+		return;
+	}
 	
 	Log.Info(this.GetName() + " have small airport = " + small_airport, Log.LVL_DEBUG);
 

@@ -16,6 +16,7 @@ class PairFinder {
 	all_nodes = null;
 	vehicle_type_cargos = null; // table with TM_* as key => list of cargos that VT accepts
 	any_tm_cargoes = null; // => list of cargos than any VT can take
+	air_cargo_max_range = null; // => list of max air range per cargo
 
 	constructor()
 	{
@@ -71,10 +72,37 @@ function PairFinder::UpdateVehicleCargoCapability()
 		// Get a list of all cargoes that can be transported with current transport mode
 		local available_cargos = AICargoList();
 		available_cargos.Valuate(Engine.DoesEngineExistForCargo, TransportModeToVehicleType(tm), true, true, false);
+		available_cargos.KeepValue(1);
 		this.vehicle_type_cargos.rawset(tm, available_cargos);
 
 		// Add cargoes to list of cargoes for which there is at least one transport mode that can transport them
 		this.any_tm_cargoes.AddList(available_cargos);
+
+		if(tm == TM_AIR)
+		{
+			// Get the aircraft range of the suggested planning engine for each cargo
+			this.air_cargo_max_range = AIList();
+			foreach(cargo, _ in available_cargos)
+			{
+				local engine = Strategy.FindEngineModelToPlanFor(cargo, AIVehicle.VT_AIR, false, true, -1);
+				local max_range = AIEngine.GetMaximumOrderDistance(engine);
+				Log.Info("Max range for " + AICargo.GetCargoLabel(cargo) + " is " + max_range + " using " + AIEngine.GetName(engine), Log.LVL_DEBUG);
+
+				// Check that we can afford two airports + engine for this cargo
+				local airport_type = Strategy.GetAffordedAirportTypeForNewConnection(max_range, cargo);
+
+
+				if(airport_type != null)
+				{
+					this.air_cargo_max_range.AddItem(cargo, max_range);
+				}
+				else
+				{
+					this.air_cargo_max_range.AddItem(cargo, -1);
+					Log.Info(".. but 2 airports + 1 aircraft can't be afforded", Log.LVL_DEBUG);
+				}
+			}
+		}
 	}
 }
 function PairFinder::AddNodesSorted(connection_list)
@@ -241,6 +269,21 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 	}
 }
 
+function PairFinder::CanAffordAirConnection()
+{
+	foreach(cargo, range in this.air_cargo_max_range)
+	{
+		if(range != -1)
+		{
+			Log.Info("Pairfinder: Can afford air connection for " + AICargo.GetCargoLabel(cargo), Log.LVL_DEBUG);
+			return true;
+		}
+	}
+
+	Log.Info("Pairfinder: Can't afford air connections", Log.LVL_INFO);
+	return false; 
+}
+
 function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 {
 	// Rebuild cargo/vehicle availability
@@ -261,13 +304,22 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 
 	// transport modes to try for each pair
 	local try_tm = [];
-	local use_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW;
+	local use_air = Vehicle.GetVehiclesLeft(AIVehicle.VT_AIR) >= MIN_VEHICLES_TO_BUILD_NEW && this.CanAffordAirConnection();
 	local use_road = Vehicle.GetVehiclesLeft(AIVehicle.VT_ROAD) >= MIN_VEHICLES_TO_BUILD_NEW;
 	local use_air_only = !use_road && use_air;
 	if(use_air)
 		try_tm.append(TM_AIR);
 	if(use_road)
 		try_tm.append(TM_ROAD);
+
+	Log.Info("Pairfinder: Use air = " + use_air, Log.LVL_INFO);
+	Log.Info("Pairfinder: Use road = " + use_road, Log.LVL_INFO);
+
+	if(try_tm.len() == 0)
+	{
+		Log.Warning("Pairfinder: No transport mode possible", Log.LVL_INFO);
+		return null;
+	}
 
 	// Get min noise needed for aircraft
 	local airport_noise = 0;
@@ -382,6 +434,15 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 					// Don't use aircraft if there is no aircraft that
 					// takes the given cargo
 					if(!aircraft_cargos.HasItem(source_node.cargo_id))
+						continue;
+
+					// Don't consider connections that are longer than max range - 20 tiles 
+					// to allow for some bad luck based on station placement.
+					local order_dist = AIOrder.GetOrderDistance(AIVehicle.VT_AIR, dest_node.GetLocation(), source_node.GetLocation());
+					local max_engine_range = this.air_cargo_max_range.GetValue(source_node.cargo_id);
+					if(max_engine_range == -1) // -1 is PairFinder flag for cargos where 2 * airport + engine can't be afforded
+						continue;
+					if(max_engine_range != 0 && order_dist > max_engine_range - 20) // 0 is NoAI/OpenTTD flag for engines without limit
 						continue;
 
 					local budget_overrun = GetNoiseBudgetOverrun();

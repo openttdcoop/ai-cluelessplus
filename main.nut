@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 26);
+import("util.superlib", "SuperLib", 27);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -256,6 +256,7 @@ function GetAirportTypeList_AllowedAndBuildable(avoid_small_airports = false)
 
 	if(avoid_small_airports)
 	{
+		// Only remove small airports if there is at least one large
 		local skip_small = false;
 		foreach(ap_type in airport_type_list)
 		{
@@ -1244,7 +1245,7 @@ function CluelessPlus::ConnectPair(budget)
 	connection.node = [];
 
 	local failed = false;
-	Log.Info("Connect " + pair[0].GetName() + " with " + pair[1].GetName(), Log.LVL_INFO);
+	Log.Info("Connect " + pair[0].GetName() + " with " + pair[1].GetName() + " using " + TransportModeToString(connection.transport_mode), Log.LVL_INFO);
 
 	// save town, industry, and node in connection data-structure.
 	foreach(node in pair)
@@ -1537,29 +1538,8 @@ function CluelessPlus::ConstructStationAndDepots(pair, connection, retry = false
 	{
 		// Select an airport that can be afforded after reserving* money for one aircraft   * = no actual reservation is made. Only accounting for the engine is done.
 
-		local large_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, false, false);
-		local large_engine_cost = AIEngine.GetPrice(large_engine);
-
-		// can afford large airport + large airplane?
-		local airport_type_list = GetAirportTypeList_AllowedAndBuildable(false);
-		airport_type_list.Valuate(AIAirport.GetPrice);
-		airport_type_list.KeepBelowValue(AICompany.GetBankBalance(AICompany.COMPANY_SELF) - large_engine_cost * 12 / 10);
-
-		if(airport_type_list.IsEmpty())
-		{
-			// couldn't afford large airport + large engine.
-			// try small airport
-
-			local small_engine = Strategy.FindEngineModelToPlanFor(connection.cargo_type, AIVehicle.VT_AIR, true, false);
-			local small_engine_cost = AIEngine.GetPrice(small_engine);
-
-			airport_type_list = GetAirportTypeList_AllowedAndBuildable(true);
-			airport_type_list.Valuate(AIAirport.GetPrice);
-			airport_type_list.KeepBelowValue(AICompany.GetBankBalance(AICompany.COMPANY_SELF) - small_engine_cost * 12 / 10);
-		}
-
-		airport_type_list.Sort(AIList.SORT_BY_ITEM, AIList.SORT_DESCENDING);
-		airport_type = airport_type_list.Begin(); // take last airport type that can be afforded
+		local min_range = AIOrder.GetOrderDistance(AIVehicle.VT_AIR, pair[0].GetLocation(), pair[1].GetLocation()) - 20;
+		airport_type = Strategy.GetAffordedAirportTypeForNewConnection(min_range, connection.cargo_type);
 
 		if(airport_type == null)
 		{
@@ -2308,6 +2288,10 @@ function CluelessPlus::FindRoadExtensionTile_SortByDistanceToTarget(a, b)
 function CluelessPlus::BuyNewConnectionVehicles(connection)
 {
 	local engine = connection.FindEngineModelToBuy();
+	if(!AIEngine.IsValidEngine(engine))
+	{
+		Log.Warning("Couldn't find an engine to buy for new connection " + connection.GetName(), Log.LVL_INFO);
+	}
 	local num = connection.NumVehiclesToBuy(engine);
 
 	Log.Info("buy engine " + engine, Log.LVL_INFO);

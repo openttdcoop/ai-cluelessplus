@@ -38,7 +38,7 @@ class FCluelessPlusPlusAI extends AIInfo {
 	function GetShortName()   { return "CLUP"; } // CLUP is the non SVN short name. CLUS is used by the SVN development edition
 	function GetDescription() { return "CluelessPlus connects towns and industries using road and air transport. CluelessPlus tries to do its job without causing major jams for other transport companies using jam detection mechanisms."; }
 	function GetAPIVersion()  { return "1.1"; }
-	function GetVersion()     { return 34; }
+	function GetVersion()     { return 35; }
 	function MinVersionToLoad() { return 1; }
 	function GetDate()        { return "2012-04-29"; }
 	function GetUrl()         { return "http://junctioneer.net/o-ai/CLUP"; }
