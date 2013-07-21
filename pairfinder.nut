@@ -906,7 +906,7 @@ function Node::GetCargoAvailability()
 		return 0;
 	}
 
-	return api.GetLastMonthProduction(self_id, this.cargo_id) - (api.GetLastMonthTransported(self_id, this.cargo_id) * TRANSPORTED_FACTOR_PERCENT) / 100;
+	return api.GetLastMonthTransportedPercentage(self_id, this.cargo_id);
 }
 
 // returns [value, cargo_id] for the cargo with higest value availability
@@ -914,23 +914,25 @@ function Node::GetCargoValueAvailability()
 {
 	local api = null;
 	local self_id = -1;
+	local transported = 0;
 
 	if(this.IsTown())
 	{
 		api = AITown;
 		self_id = town_id;
+		transported = AITown.GetLastMonthSupplied(town_id, this.cargo_id);
 	}
 	else if(this.IsIndustry())
 	{
 		api = AIIndustry;
 		self_id = industry_id;
+		transported = AIIndustry.GetLastMonthTransported(industry_id, this.cargo_id);
 	}
 	else
 	{
 		return 0;
 	}
-
-	return (api.GetLastMonthProduction(self_id, this.cargo_id) - (api.GetLastMonthTransported(self_id, this.cargo_id) * TRANSPORTED_FACTOR_PERCENT) / 100) * 
+	return (api.GetLastMonthProduction(self_id, this.cargo_id) - (transported * TRANSPORTED_FACTOR_PERCENT) / 100) *
 			AICargo.GetCargoIncome(this.cargo_id, 150, 20); // assume 150 tiles and 20 days in transit
 }
 

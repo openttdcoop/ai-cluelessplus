@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 34);
+import("util.superlib", "SuperLib", 35);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -867,7 +867,7 @@ function CluelessPlus::HandleEvents()
 
 		local ev_type = ev.GetEventType();
 
-		if(ev_type == AIEvent.AI_ET_VEHICLE_LOST)
+		if(ev_type == AIEvent.ET_VEHICLE_LOST)
 		{
 			local lost_event = AIEventVehicleLost.Convert(ev);
 			local lost_veh = lost_event.GetVehicleID();
@@ -901,7 +901,7 @@ function CluelessPlus::HandleEvents()
 				}
 			}
 		}
-		else if(ev_type == AIEvent.AI_ET_VEHICLE_CRASHED)
+		else if(ev_type == AIEvent.ET_VEHICLE_CRASHED)
 		{
 			local crash_event = AIEventVehicleCrashed.Convert(ev);
 			local crash_reason = crash_event.GetCrashReason();
@@ -932,7 +932,7 @@ function CluelessPlus::HandleEvents()
 				}
 			}
 		}
-		else if(ev_type == AIEvent.AI_ET_INDUSTRY_CLOSE)
+		else if(ev_type == AIEvent.ET_INDUSTRY_CLOSE)
 		{
 			local close_event = AIEventIndustryClose.Convert(ev);
 			local close_industry = close_event.GetIndustryID();
@@ -994,7 +994,7 @@ function CluelessPlus::HandleEvents()
 				}
 			}
 		} 
-		else if(ev_type == AIEvent.AI_ET_COMPANY_IN_TROUBLE)
+		else if(ev_type == AIEvent.ET_COMPANY_IN_TROUBLE)
 		{
 			local company_in_trouble_event = AIEventCompanyInTrouble.Convert(ev);
 			local company = company_in_trouble_event.GetCompanyID();

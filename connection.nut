@@ -185,7 +185,7 @@ function Connection::ReActivateConnection()
 			// Always go to depot if breakdowns are "normal", otherwise only go if needed
 			local service_flag = this.GetDepotServiceFlag();
 
-			AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | service_flag);
+			AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.OF_NON_STOP_INTERMEDIATE | service_flag);
 		}
 	}
 
@@ -500,8 +500,8 @@ function Connection::BuyVehicles(num_vehicles, engine_id)
 		else
 		{
 			// Always go to depot if breakdowns are "normal", otherwise only go if needed
-			local service_flag = (this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.AIOF_NON_STOP_INTERMEDIATE : 0) | this.GetDepotServiceFlag();
-			local station_flag = this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.AIOF_NON_STOP_INTERMEDIATE : AIOrder.AIOF_NONE;
+			local service_flag = (this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.OF_NON_STOP_INTERMEDIATE : 0) | this.GetDepotServiceFlag();
+			local station_flag = this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.OF_NON_STOP_INTERMEDIATE : AIOrder.OF_NONE;
 
 			AIOrder.AppendOrder(new_bus, depot[0], service_flag);
 			AIOrder.AppendOrder(new_bus, station[0], station_flag); 
@@ -595,7 +595,7 @@ function Connection::GetDepotServiceFlag()
 	}
 	else
 	{
-		return AIOrder.AIOF_SERVICE_IF_NEEDED;
+		return AIOrder.OF_SERVICE_IF_NEEDED;
 	}
 }
 
@@ -1408,7 +1408,7 @@ function Connection::TryUpgradeAirports()
 		Log.Info("Modifying order of: " + AIVehicle.GetName(vehicle_id), Log.LVL_DEBUG);
 		if(!HasVehicleGoToAircraftDumpOrder(vehicle_id))
 		{
-			AIOrder.AppendOrder(vehicle_id, Airport.GetHangarTile(dump_airport), AIOrder.AIOF_STOP_IN_DEPOT);
+			AIOrder.AppendOrder(vehicle_id, Airport.GetHangarTile(dump_airport), AIOrder.OF_STOP_IN_DEPOT);
 		}
 		else
 			Log.Info("aircraft " + AIVehicle.GetName(vehicle_id) + " already has dump order", Log.LVL_DEBUG);
@@ -2057,15 +2057,15 @@ function Connection::FullLoadAtStations(enable_full_load)
 				local flags = AIOrder.GetOrderFlags(veh, i);
 				if(allow_full_load[node_id])
 				{
-					flags = flags | AIOrder.AIOF_FULL_LOAD_ANY; // add the full load flag
+					flags = flags | AIOrder.OF_FULL_LOAD_ANY; // add the full load flag
 				}
 				else
 				{
-					if((flags & AIOrder.AIOF_FULL_LOAD_ANY) != 0 ||  // if full load any flag exists since befare
-						(flags & AIOrder.AIOF_FULL_LOAD) != 0) // also check FULL_LOAD without _ANY, as CluelessPlus <= 32 used that.
+					if((flags & AIOrder.OF_FULL_LOAD_ANY) != 0 ||  // if full load any flag exists since befare
+						(flags & AIOrder.OF_FULL_LOAD) != 0) // also check FULL_LOAD without _ANY, as CluelessPlus <= 32 used that.
 					{
-						flags = flags & ~AIOrder.AIOF_FULL_LOAD; // remove the full load flag
-						flags = flags & ~AIOrder.AIOF_FULL_LOAD_ANY; // remove the full load any flag
+						flags = flags & ~AIOrder.OF_FULL_LOAD; // remove the full load flag
+						flags = flags & ~AIOrder.OF_FULL_LOAD_ANY; // remove the full load any flag
 
 						// Make sure vehicles at the station leave the station (otherwise they will keep full-loading until cargo arrives (which could be waiting infinitely long in worst case))
 						local order_dest_tile = AIOrder.GetOrderDestination(veh, i);
@@ -2102,13 +2102,13 @@ function Connection::StopInDepots(stop_in_depots)
 		if(AIOrder.IsGotoDepotOrder(veh_id, i_order))
 		{
 			if(stop_in_depots)
-				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | AIOrder.AIOF_STOP_IN_DEPOT);
+				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.OF_NON_STOP_INTERMEDIATE | AIOrder.OF_STOP_IN_DEPOT);
 			else
 			{
 				// Always go to depot if breakdowns are "normal", otherwise only go if needed
 				local service_flag = this.GetDepotServiceFlag();
 
-				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.AIOF_NON_STOP_INTERMEDIATE | service_flag);
+				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.OF_NON_STOP_INTERMEDIATE | service_flag);
 			}
 		}
 	}
