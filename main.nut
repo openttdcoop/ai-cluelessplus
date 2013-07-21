@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 27);
+import("util.superlib", "SuperLib", 34);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -49,10 +49,15 @@ OrderList <- SuperLib.OrderList;
 Road <- SuperLib.Road;
 RoadBuilder <- SuperLib.RoadBuilder;
 
+// Import SCP
+import("Library.SCPLib", "SCPLib", 45);
+import("Library.SCPClient_NoCarGoal", "SCPClient_NoCarGoal", 1);
+
 // Import other libraries
 import("queue.fibonacci_heap", "FibonacciHeap", 3);
 
 // Import all CluelessPlus files
+require("version.nut");
 require("pairfinder.nut"); 
 require("clue_helper.nut");
 require("stationstatistics.nut");
@@ -60,6 +65,7 @@ require("strategy.nut");
 require("transport_mode_stats.nut");
 require("connection.nut");
 require("timer.nut");
+require("scp_manager.nut");
 
 
 STATION_SAVE_VERSION <- "0";
@@ -71,6 +77,10 @@ g_aircraft_dump_airport_small <- null;
 g_aircraft_dump_airport_large <- null;
 
 g_num_connection_airport_upgrade <- 0;
+
+// SCP clients
+g_no_car_goal <- null;
+g_communication_tile <- null; // used by ClearAllSigns to avoid this tile
 
 //////////////////////////////////////////////////////////////////////
 
@@ -117,6 +127,16 @@ function TimerStop(table_name)
 
 
 //////////////////////////////////////////////////////////////////////
+
+// Helper for clearing all signs, except those used by SCP
+function ClearAllSigns()
+{
+	if (g_communication_tile != null) {
+		Helper.ClearAllSigns(g_communication_tile);
+	} else {
+		Helper.ClearAllSigns();
+	}
+}
 
 function GetAvailableTransportModes(min_vehicles_left = 1)
 {
@@ -454,6 +474,7 @@ class CluelessPlus extends AIController {
 	conf_ai_name = null
 	conf_min_balance = 0;
 
+	scp = null;
 
 
 	// All variables should be initiated with their values below!:  (the assigned values above is only there because Squirrel demands it)
@@ -476,6 +497,7 @@ class CluelessPlus extends AIController {
 				"Geek", "Master of universe", "Logistic king", "Ultimate logistics"];
 		conf_min_balance = 20000;
 
+		scp = null;
 	}
 
 	// WARNING: the arguments of the following functions might be wrong. Look at the implementation for the exact arguments. 
@@ -538,6 +560,20 @@ function CluelessPlus::Start()
 		this.state_ai_name = this.SetCompanyName(this.conf_ai_name);
 	}
 
+	// Init SCP
+	if(AIController.GetSetting("scp_enabled")) {
+		this.scp = SCPLib("CLUP", SELF_VERSION);
+		this.scp.SCPLogging_Info(Log.IsLevelAccepted(Log.LVL_DEBUG));
+		this.scp.SCPLogging_Error(true);
+		g_communication_tile = this.scp.SCPGetCommunicationTile();
+	} else {
+		g_communication_tile = null;
+		this.scp = null;
+	}
+	// Always create g_no_car_goal which will just act as if no NoCarGoal
+	// gs has been found if this.scp is null.
+	g_no_car_goal = SCPClient_NoCarGoal(this.scp);
+
 	// Rebuild the connections structure if loading a save game
 	if(this.loaded_from_save)
 	{
@@ -573,6 +609,12 @@ function CluelessPlus::Start()
 		this.Sleep(1);
 
 		HandleEvents();
+
+		// Read incoming SCP messages (up to 5 per loop)
+		if(this.scp != null) {
+			this.scp.SCPLogging_Info(Log.IsLevelAccepted(Log.LVL_DEBUG));
+			for(local j = 0; j < 5 && this.scp.Check(); j++){}
+		}
 
 		// Sometimes...
 		if(i%10 == 1)

@@ -27,11 +27,11 @@ class PairFinder {
 	function GetTransportModes(); // a list of transport modes that are allowed to use
 	function UpdateVehicleCargoCapability(); // update member variables for which cargoes each vehicle type can transport
 
-	function AddNodesSorted(connection_list);
+	function AddNodesSorted(desperateness, connection_list);
 
 	// Helper functions to AddNodesSorted
-	function AddTownNodes(connection_list, node_heap);
-	function AddIndustryNodes(connection_list, node_heap);
+	function AddTownNodes(desperateness, connection_list, node_heap, bonus_cargos);
+	function AddIndustryNodes(desperateness, connection_list, node_heap, bonus_cargos);
 
 	// returns {
 	//   pair -> [source node, dest node]
@@ -105,7 +105,7 @@ function PairFinder::UpdateVehicleCargoCapability()
 		}
 	}
 }
-function PairFinder::AddNodesSorted(connection_list)
+function PairFinder::AddNodesSorted(desperateness, connection_list)
 {
 	//// Get settings ////
 	/*
@@ -130,13 +130,31 @@ function PairFinder::AddNodesSorted(connection_list)
 
 	Log.Info("allowed connection types: " + allowed_connection_types, Log.LVL_DEBUG);
 
+	// Some cargos may have a bonus
+	// Only give a bonus if we have a profit so that the bonus doesn't
+	// cause the AI to get a first route with too low profit.
+	local my_company = AICompany.ResolveCompanyID(AICompany.COMPANY_SELF);
+	local profit = AICompany.GetQuarterlyIncome(my_company, AICompany.CURRENT_QUARTER) - AICompany.GetQuarterlyExpenses(my_company, AICompany.CURRENT_QUARTER);
+	local cargo_bonus = AIList();
+	if (profit > 2000 && AICompany.GetQuarterlyCompanyValue(my_company, AICompany.CURRENT_QUARTER) > 1000) {
+		local cargo_goal = g_no_car_goal.GetGoalCargoArray();
+		if (cargo_goal != null) {
+			foreach(cargo in cargo_goal) {
+				local to_transport = max(0, cargo.goal - cargo.transported);
+				local bonus = -1 * to_transport * 1000 / cargo.goal
+				cargo_bonus.AddItem(cargo.cargo, bonus);
+			}
+		}
+	}
+	
+
 	//// Add Nodes to Fibonacci Heap ////
 	local node_heap = FibonacciHeap();
 
 	if(allowed_connection_types == 0 || allowed_connection_types == 2)
 	{
 		Log.Info("connect towns", Log.LVL_DEBUG);
-		AddTownNodes(connection_list, node_heap);
+		AddTownNodes(desperateness, connection_list, node_heap, cargo_bonus);
 	}
 	if(allowed_connection_types == 1 || allowed_connection_types == 2)
 	{
@@ -146,7 +164,7 @@ function PairFinder::AddNodesSorted(connection_list)
 		if(use_road)
 		{
 			Log.Info("connect industries", Log.LVL_DEBUG);
-			AddIndustryNodes(connection_list, node_heap);
+			AddIndustryNodes(desperateness, connection_list, node_heap, cargo_bonus);
 		}
 	}
 
@@ -160,7 +178,18 @@ function PairFinder::AddNodesSorted(connection_list)
 	}
 }
 
-function PairFinder::AddTownNodes(connection_list, node_heap)
+function FilterCargoList(cargo_list, desperateness)
+{
+	// In NoCarGoal games, only use non-goal cargos if we are desperate (or all goals
+	// have been completed)
+	if(g_no_car_goal.IsNoCarGoalGame() && desperateness <= 1)
+	{
+		local filter_completed = g_no_car_goal.GetNUncompletedGoals() > 0;
+		g_no_car_goal.FilterCargoList(cargo_list, filter_completed);
+	}
+}
+
+function PairFinder::AddTownNodes(desperateness, connection_list, node_heap, bonus_cargos)
 {
 	local town_list = AITownList();
 	local allow_competition = AIController.GetSetting("allow_competition");
@@ -188,6 +217,9 @@ function PairFinder::AddTownNodes(connection_list, node_heap)
 		cargo_list.AddList(produced_cargo_list);
 		cargo_list.AddList(accepted_cargo_list);
 
+		// Filter list with respect to Goals
+		FilterCargoList(cargo_list, desperateness);
+
 		foreach(cargo_id, _ in cargo_list)
 		{
 			// Skip if the cargo is already transported from the town and competition is not allowed
@@ -199,14 +231,16 @@ function PairFinder::AddTownNodes(connection_list, node_heap)
 			// Only actually append the node if it accepts/produces the cargo - dummy nodes do not make anyone happy
 			if (node.IsCargoAccepted() || node.IsCargoProduced())
 			{
-				node_heap.Insert(node, -1 * node.GetCargoValueAvailability());
+				local bonus = 0;
+				if (bonus_cargos.HasItem(cargo_id)) bonus = bonus_cargos.GetValue(cargo_id);
+				node_heap.Insert(node, -1 * node.GetCargoValueAvailability() + bonus);
 			}
 		}
 
 	}
 }
 
-function PairFinder::AddIndustryNodes(connection_list, node_heap)
+function PairFinder::AddIndustryNodes(desperateness, connection_list, node_heap, bonus_cargos)
 {
 	local industry_list = AIIndustryList();
 	local cargo_list = AICargoList();
@@ -216,7 +250,12 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 /*	cargo_list.Valuate(Engine.DoesEngineExistForCargo, AIVehicle.VT_ROAD, true, true, false);
 	cargo_list.KeepValue(1);*/
 
+	// Filter list with respect to Goals
+	FilterCargoList(cargo_list, desperateness);
+
 	Log.Info("cargo_list size: " + cargo_list.Count(), Log.LVL_DEBUG);
+
+	if (cargo_list.IsEmpty()) return;
 
 	local t_start = 0;
 	local t_end = 0;
@@ -263,7 +302,9 @@ function PairFinder::AddIndustryNodes(connection_list, node_heap)
 				) )
 			{
 				local node = Node(-1, industry_id, cargo_id);
-				node_heap.Insert(node, -1 * node.GetCargoValueAvailability());
+				local bonus = 0;
+				if (bonus_cargos.HasItem(cargo_id)) bonus = bonus_cargos.GetValue(cargo_id);
+				node_heap.Insert(node, -1 * node.GetCargoValueAvailability() + bonus);
 			}
 		}
 	}
@@ -290,7 +331,7 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 	this.UpdateVehicleCargoCapability();
 
 	// Rebuild the list of nodes
-	this.AddNodesSorted(connection_list);
+	this.AddNodesSorted(desperateness, connection_list);
 	Log.Info("a total of " + all_nodes.len() + " nodes has been added", Log.LVL_SUB_DECISIONS);
 	Log.Info("all nodes has been sorted by cargo value availability", Log.LVL_DEBUG);
 
@@ -374,6 +415,13 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 		existing_network_area_cached = PairFinder.ExistingNetworkAreaPreCache(connection_list, desperateness);
 	}
 
+	// Give a bonus to cargos that help achieving a goal
+	local bonus_cargos = AIList();
+	if(g_no_car_goal.IsNoCarGoalGame()) {
+		bonus_cargos = AICargoList();
+		FilterCargoList(bonus_cargos, 0);
+	}
+
 	// Find a good pair using one of the top-producing nodes
 	foreach(source_node in top_source_nodes)
 	{
@@ -388,6 +436,15 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 		{
 			++i;
 			if(dest_node.cargo_id != source_node.cargo_id) // only consider the node of the right cargo type of a given node
+			{
+				continue;
+			}
+
+			// In NoCarGoal games, only use non-goal cargos if we are desperate (or all goals
+			// have been completed)
+			if(g_no_car_goal.IsNoCarGoalGame() && desperateness <= 1 &&
+					g_no_car_goal.GetNUncompletedGoals() > 0 &&
+					!g_no_car_goal.IsGoalCargo(dest_node.cargo_id, true))
 			{
 				continue;
 			}
@@ -530,12 +587,17 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 					bonus += 2000;
 			}
 
+			// Give a significant bonus to cargos that help achieving a goal.
+			if (bonus_cargos.HasItem(source_node.cargo_id)) {
+				bonus += 3000;
+			}
+
 			// Make a combined score of the production value and distance deviation
 			local dist_deviation = Helper.Abs(g_tm_stats[transport_mode].ideal_construct_distance - dist); // 0 = correct dist and then increasing for how many tiles wrong the distance is
 			score = prod_value + (70 - dist_deviation) * 2 + bonus;
 
-			if(transport_mode == TM_AIR)
-				score += 1000; // at 2000, several air-links are built, but they aren't as good as the road links from an economical point of view.
+//			if(transport_mode == TM_AIR)
+//				score += 1000; // at 2000, several air-links are built, but they aren't as good as the road links from an economical point of view.
 
 			local_best_pairs.Insert([source_node, dest_node, score, transport_mode], -score);
 		}
@@ -559,7 +621,7 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 
 		// Remove out dated failed connections
 		Node.RemoveOldFailedConnections(connection_list, /* min age: */ 5 * 365, /* min num: */ 1);
-
+	
 		return null;
 	}
 
@@ -571,7 +633,7 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 		Log.Info(pair[0].GetName() + " - " + pair[1].GetName() + " using " + TransportModeToString(pair[3]) + " => score: " + pair[2], Log.LVL_DEBUG);
 	}
 
-	Log.Info("best pair score: " + best_pair[2], Log.LVL_SUB_DECISIONS);
+	Log.Info("best pair score: " + best_pair[2] + " (" + best_pair[0].GetName() + " - " + best_pair[1].GetName() + ")", Log.LVL_SUB_DECISIONS);
 
 	return {
 		pair = [best_pair[0], best_pair[1]], // [source node, dest node]

@@ -27,6 +27,8 @@
 //
 // License: GNU GPL - version 2
 
+require("version.nut");
+
 //////////////////////////////////////////////////////////////////////
 //                                                                  //
 //  CLASS: FCluelessPlusPlusAI - registration of the ai             //
@@ -37,17 +39,17 @@ class FCluelessPlusPlusAI extends AIInfo {
 	function GetName()        { return "CluelessPlus"; }
 	function GetShortName()   { return "CLUP"; } // CLUP is the non SVN short name. CLUS is used by the SVN development edition
 	function GetDescription() { return "CluelessPlus connects towns and industries using road and air transport. CluelessPlus tries to do its job without causing major jams for other transport companies using jam detection mechanisms."; }
-	function GetAPIVersion()  { return "1.1"; }
-	function GetVersion()     { return 35; }
+	function GetAPIVersion()  { return "1.2"; }
+	function GetVersion()     { return SELF_VERSION; }
 	function MinVersionToLoad() { return 1; }
-	function GetDate()        { return "2012-04-29"; }
+	function GetDate()        { return "2013-07-21"; }
 	function GetUrl()         { return "http://junctioneer.net/o-ai/CLUP"; }
 	function UseAsRandomAI()  { return true; }
 	function CreateInstance() { return "CluelessPlus"; }
 
 	function GetSettings() {
 		AddSetting({name = "use_rvs", description = "Enable road vehicles", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
-		AddSetting({name = "use_planes", description = "Enable aircrafts", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
+		AddSetting({name = "use_planes", description = "Enable aircrafts", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		//AddSetting({name = "use_trains", description = "Enable trains", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		//AddSetting({name = "use_ships", description = "Enable ships", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 
@@ -55,13 +57,20 @@ class FCluelessPlusPlusAI extends AIInfo {
 		AddSetting({name = "expand_local", description = "Build new connections nearby existing ones (simple growing boundary box)", easy_value = 1, medium_value = 1, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		AddSetting({name = "allow_competition", description = "Allow competition against existing transport links", easy_value = 0, medium_value = 0, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		AddSetting({name = "connection_types", description = "", easy_value = 0, medium_value = 2, hard_value = 2, custom_value = 2, min_value = 0, max_value = 2, flags = AICONFIG_INGAME});
+		AddLabels("connection_types", {_0 = "Connect towns only", _1 = "Connect industries only", _2 = "Connect both towns and industries" } );
 		AddSetting({name = "max_num_bus_stops", description = "Maximum number of road stops per station to build" easy_value = 1, medium_value = 2, hard_value = 4, custom_value = 4, flags = AICONFIG_INGAME, min_value = 1, max_value = 16});
 		AddSetting({name = "enable_magic_dtrs", description = "Allow usage of drive-trough road stops terminated with a depot", easy_value = 0, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
+		AddSetting({name = "scp_enabled", 
+				description = "Enable AI-GS communication - with support for NoCarGoal (SCP library)", 
+				easy_value = 1, 
+				medium_value = 1, 
+				hard_value = 1, 
+				custom_value = 1, 
+				flags = CONFIG_BOOLEAN});
 		AddSetting({name = "log_level", description = "Debug: Log level (higher = print more)", easy_value = 1, medium_value = 1, hard_value = 1, custom_value = 1, flags = AICONFIG_INGAME, min_value = 1, max_value = 3});
+		AddLabels("log_level", {_1 = "1: Info", _2 = "2: Verbose", _3 = "3: Debug" } );
 		AddSetting({name = "debug_signs", description = "Debug: Build debug signs", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN | AICONFIG_INGAME});
 		AddSetting({name = "enable_timers", description = "Debug: Clock AI performance (can't be changed in-game)", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0, flags = AICONFIG_BOOLEAN });
-
-		AddLabels("connection_types", {_0 = "Connect towns only", _1 = "Connect industries only", _2 = "Connect both towns and industries" } );
 	}
 }
 
