@@ -223,7 +223,7 @@ function PairFinder::AddTownNodes(desperateness, connection_list, node_heap, bon
 		foreach(cargo_id, _ in cargo_list)
 		{
 			// Skip if the cargo is already transported from the town and competition is not allowed
-			if(!allow_competition && AITown.GetLastMonthTransported(town_id, cargo_id) != 0)
+			if(!allow_competition && AITown.GetLastMonthSupplied(town_id, cargo_id) != 0)
 				continue;
 
 			local node = Node(town_id, -1, cargo_id);
