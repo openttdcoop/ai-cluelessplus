@@ -2370,8 +2370,16 @@ function CluelessPlus::PlaceHQ(nearby_tile)
 	Log.Info("Trying to build the HQ close to " + ClueHelper.TileLocationString(nearby_tile), Log.LVL_INFO);
 
 	local tiles = Tile.MakeTileRectAroundTile(nearby_tile, 40);
-	tiles.Valuate(IsHQLocationNearbyRoad);
-	tiles.KeepValue(1);
+
+	// Remove tiles not near road.
+	local remove_tiles = AITileList();
+	foreach(hq_tile, _ in tiles)
+	{
+		if (!IsHQLocationNearbyRoad(hq_tile)) {
+			remove_tiles.AddTile(hq_tile);
+		}
+	}
+	tiles.RemoveList(remove_tiles);
 
 	tiles.Valuate(AIMap.DistanceManhattan, nearby_tile);
 	tiles.Sort(AIList.SORT_BY_VALUE, true); // lowest distance first
