@@ -42,7 +42,7 @@ class FCluelessPlusPlusAI extends AIInfo {
 	function GetAPIVersion()  { return "1.2"; }
 	function GetVersion()     { return SELF_VERSION; }
 	function MinVersionToLoad() { return 1; }
-	function GetDate()        { return "2013-07-21"; }
+	function GetDate()        { return "2017-04-01"; }
 	function GetUrl()         { return "http://junctioneer.net/o-ai/CLUP"; }
 	function UseAsRandomAI()  { return true; }
 	function CreateInstance() { return "CluelessPlus"; }

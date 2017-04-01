@@ -196,8 +196,10 @@ function PairFinder::AddTownNodes(desperateness, connection_list, node_heap, bon
 	foreach(town_id, _ in town_list)
 	{
 		// Ignore towns with too low rating
-		if(!Town.TownRatingAllowStationBuilding(town_id))
+		if(!Town.TownRatingAllowStationBuilding(town_id)) {
+			Log.Info("Skip town with too low rating", Log.LVL_DEBUG);
 			continue;
+		}
 
 		// Add nodes for all cargos which can be produced/accepted by towns
 		local produced_cargo_list = Helper.GetTownProducedCargoList();
@@ -333,7 +335,19 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 	// Rebuild the list of nodes
 	this.AddNodesSorted(desperateness, connection_list);
 	Log.Info("a total of " + all_nodes.len() + " nodes has been added", Log.LVL_SUB_DECISIONS);
-	Log.Info("all nodes has been sorted by cargo value availability", Log.LVL_DEBUG);
+	if (Log.IsLevelAccepted(Log.LVL_DEBUG)) {
+		local s = "";
+		foreach(node in all_nodes) {
+			if (s != "") s += ", ";
+			s += node.GetName();
+			if (s.len() > 80) {
+				Log.Info("nodes: " + s, Log.LVL_DEBUG);
+				s = "";
+			}
+		}
+		Log.Info("nodes: " + s, Log.LVL_DEBUG);
+		Log.Info("all nodes has been sorted by cargo value availability", Log.LVL_DEBUG);
+	}
 
 	Log.Info("desperateness: " + desperateness, Log.LVL_DEBUG);
 
@@ -404,6 +418,7 @@ function PairFinder::FindTwoNodesToConnect(desperateness, connection_list)
 			if (i >= 8 * (1 + desperateness)) break;
 		}
 	}
+	Log.Info("Top source node count: " + top_source_nodes.len(), Log.LVL_DEBUG);
 
 	local global_best_pairs = FibonacciHeap();
 

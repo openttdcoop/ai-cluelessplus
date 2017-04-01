@@ -23,7 +23,7 @@
 // License: GNU GPL - version 2
 
 // Import SuperLib
-import("util.superlib", "SuperLib", 35);
+import("util.superlib", "SuperLib", 40);
 
 Result <- SuperLib.Result;
 Log <- SuperLib.Log;
@@ -1398,8 +1398,19 @@ function CluelessPlus::ConnectPair(budget)
 						local con_ret = road_builder.ConnectTiles();
 						if(con_ret == RoadBuilder.CONNECT_FAILED_TIME_OUT) // no error was found path finding a litle bit from one end
 						{
-							road_builder.Init(to, from, repair, 100000);
+							// For state_desperateness [0,5] scale num loops for pathfinding upwards
+							// from 40k to 100k
+							local loops = 100000;
+							if (this.state_desperateness <= 5) {
+								loops = 40000 + 80000 * this.state_desperateness / 5
+							}
+							road_builder.Init(to, from, repair, loops);
 							con_ret = road_builder.ConnectTiles();
+							Log.Info("Connection result: " + con_ret, Log.LVL_SUB_DECISIONS);
+						}
+						else
+						{
+							Log.Info("Initial 500 PF failed for other reason than timeout: " + con_ret, Log.LVL_SUB_DECISIONS);
 						}
 
 						connected = con_ret == RoadBuilder.CONNECT_SUCCEEDED;
