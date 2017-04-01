@@ -76,4 +76,3 @@ class FCluelessPlusPlusAI extends AIInfo {
 
 /* Tell the core we are an AI */
 RegisterAI(FCluelessPlusPlusAI());
-
