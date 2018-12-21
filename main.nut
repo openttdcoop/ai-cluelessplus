@@ -398,7 +398,7 @@ function GetAircraftDumpAirport(need_large_airport)
 	if(ap_tile == null)
 	{
 		// Fall back to iterating town list if HQ / smallest town failed
-		foreach(town in town_list)
+		foreach(town, _ in town_list)
 		{
 			ap_tile = Airport.BuildAirportInTown(town, selected_type, no_cargo, no_cargo);
 			if(ap_tile != null)
