@@ -184,8 +184,8 @@ function Connection::ReActivateConnection()
 		{
 			// Always go to depot if breakdowns are "normal", otherwise only go if needed
 			local service_flag = this.GetDepotServiceFlag();
-
-			AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.OF_NON_STOP_INTERMEDIATE | service_flag);
+			local non_stop_flag = this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.OF_NON_STOP_INTERMEDIATE : 0;
+			AIOrder.SetOrderFlags(veh_id, i_order, non_stop_flag | service_flag);
 		}
 	}
 
@@ -238,7 +238,7 @@ function Connection::CloseConnection()
 
 	if(this.transport_mode == TM_AIR)
 	{
-		//AIController.Break("close air connection");
+		AIController.Break("close air connection");
 	}
 
 	if(this.state == Connection.STATE_CLOSING_DOWN || this.state == Connection.STATE_CLOSED_DOWN || this.state == Connection.STATE_FAILED)
@@ -779,7 +779,7 @@ function Connection::ManageState()
 	{
 		if(this.transport_mode == TM_AIR)
 		{
-			//AIController.Break("close air connection");
+			AIController.Break("close air connection");
 		}
 
 		local vehicle_list = this.GetVehicles();
@@ -906,6 +906,9 @@ function Connection::ManageState()
 
 			Log.Info("Change state to STATE_CLOSED_DOWN");
 			this.SetState(Connection.STATE_CLOSED_DOWN);
+		} else {
+			// Make sure vehicles stop in depot.
+			this.StopInDepots(true);
 		}
 	}
 	else if(this.state == Connection.STATE_AIRPORT_UPGRADE)
@@ -1171,7 +1174,7 @@ function Connection::ManageAirports()
 
 function Connection::CheckForAirportUpgrade()
 {
-	if( (g_num_connection_airport_upgrade != 0 || g_num_connection_airport_upgrade < this.clueless_instance.connection_list.len() / 2) && // don't upgrade too many at the same time
+	if( (g_num_connection_airport_upgrade == 0 || g_num_connection_airport_upgrade < this.clueless_instance.connection_list.len() / 2) && // don't upgrade too many at the same time
 			(last_airport_upgrade_fail == null || last_airport_upgrade_fail + 365 < AIDate.GetCurrentDate())) // fail at maximum once a year
 	{
 		Log.Info("ManageAirports", Log.LVL_DEBUG);
@@ -1524,6 +1527,7 @@ function Connection::TryUpgradeAirports()
 
 			// Set state back to active
 			this.StopAirportUpgrading();
+			return;
 		}
 		else
 		{
@@ -1543,7 +1547,10 @@ function Connection::TryUpgradeAirports()
 	{
 		// have tried to upgrade for more than a year
 		this.StopAirportUpgrading();
+		return;
 	}
+
+	Log.Info("Leave upgrade process for now and come back to it later. " + this.GetName(), Log.LVL_INFO);
 }
 
 function Connection::StopAirportUpgrading()
@@ -2101,14 +2108,15 @@ function Connection::StopInDepots(stop_in_depots)
 	{
 		if(AIOrder.IsGotoDepotOrder(veh_id, i_order))
 		{
+			local non_stop_flag = this.transport_mode == TM_ROAD || this.transport_mode == TM_RAIL? AIOrder.OF_NON_STOP_INTERMEDIATE : 0;
 			if(stop_in_depots)
-				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.OF_NON_STOP_INTERMEDIATE | AIOrder.OF_STOP_IN_DEPOT);
+				AIOrder.SetOrderFlags(veh_id, i_order, non_stop_flag | AIOrder.OF_STOP_IN_DEPOT);
 			else
 			{
 				// Always go to depot if breakdowns are "normal", otherwise only go if needed
 				local service_flag = this.GetDepotServiceFlag();
 
-				AIOrder.SetOrderFlags(veh_id, i_order, AIOrder.OF_NON_STOP_INTERMEDIATE | service_flag);
+				AIOrder.SetOrderFlags(veh_id, i_order, non_stop_flag | service_flag);
 			}
 		}
 	}

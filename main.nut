@@ -1369,11 +1369,11 @@ function CluelessPlus::ConnectPair(budget)
 							{
 								TimerStart("build_pathfinding");
 								road_builder.Init(depot_front_tile, station_front_tile, repair, max_loops); // -> start construct it from the station
-								road_builder.DoPathfinding();
+								local found_path = road_builder.DoPathfinding();
 								TimerStop("build_pathfinding");
 
 								TimerStart("build_buildroad");
-								connected = road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED;
+								connected = found_path && road_builder.ConnectTiles() == RoadBuilder.CONNECT_SUCCEEDED;
 								TimerStop("build_buildroad");
 							}
 						}
